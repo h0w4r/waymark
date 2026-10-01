@@ -4,7 +4,7 @@
   "description": "Hierarchical, line-anchored maps of how code executes — MCP server, CLI and shareable HTML viewer for agentic harnesses",
   "main": "src/mcp.js",
   "scripts": {
-    "test": "node --test test/*.test.js",
+    "test": "node --test test/waymark.test.js",
     "mcp": "node src/mcp.js"
   },
   "keywords": [
@@ -32,7 +32,7 @@
     "src"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "repository": {
     "type": "git",
