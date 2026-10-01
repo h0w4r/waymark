@@ -15,14 +15,15 @@
           "title": "Entrada CLI verify",
           "description": "La CLI elige el ID indicado o todos los mapas, y transmite la opción fix a verifyMap.",
           "path": "src/cli.js",
-          "lineNumber": 191,
+          "lineNumber": 195,
           "lineContent": "const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);",
-          "status": "ok",
-          "fileHash": "0a2c7b7d5877",
+          "status": "moved",
+          "fileHash": "ab2abb013c03",
           "snippet": {
-            "startLine": 188,
+            "startLine": 192,
             "code": "    }\n    case 'verify': {\n      const r = root();\n      const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);\n      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.broken || (opt.strict && v.stale && !v.fixed)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }\n    case 'render': {\n      const r = root();\n      const p = writeHtml(r, loadMap(r, rest[0]));"
-          }
+          },
+          "note": "line 191 -> 195"
         },
         {
           "id": "1b",
@@ -396,28 +397,30 @@
           "title": "Reporta estado CLI",
           "description": "La CLI prioriza BROKEN sobre STALE y muestra los cambios registrados.",
           "path": "src/cli.js",
-          "lineNumber": 195,
+          "lineNumber": 199,
           "lineContent": "const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';",
-          "status": "ok",
-          "fileHash": "0a2c7b7d5877",
+          "status": "moved",
+          "fileHash": "ab2abb013c03",
           "snippet": {
-            "startLine": 192,
+            "startLine": 196,
             "code": "      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.broken || (opt.strict && v.stale && !v.fixed)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }\n    case 'render': {\n      const r = root();\n      const p = writeHtml(r, loadMap(r, rest[0]));\n      out(p);\n      if (opt.open) openFile(p);\n      return;\n    }"
-          }
+          },
+          "note": "line 195 -> 199"
         },
         {
           "id": "3g",
           "title": "Decide código de salida",
           "description": "Devuelve fallo si hay anclas rotas o si strict detecta deriva que no se fijó.",
           "path": "src/cli.js",
-          "lineNumber": 198,
+          "lineNumber": 202,
           "lineContent": "if (v.broken || (opt.strict && v.stale && !v.fixed)) bad = true;",
-          "status": "ok",
-          "fileHash": "0a2c7b7d5877",
+          "status": "moved",
+          "fileHash": "ab2abb013c03",
           "snippet": {
-            "startLine": 195,
+            "startLine": 199,
             "code": "        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.broken || (opt.strict && v.stale && !v.fixed)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }\n    case 'render': {\n      const r = root();\n      const p = writeHtml(r, loadMap(r, rest[0]));\n      out(p);\n      if (opt.open) openFile(p);\n      return;\n    }\n    case 'delete':\n      return out(`deleted ${deleteMap(root(), rest[0])}`);\n    case 'suggest': {"
-          }
+          },
+          "note": "line 198 -> 202"
         }
       ],
       "tree": [
@@ -475,17 +478,17 @@
     "createdAt": "2026-10-01T17:03:45.835Z",
     "updatedAt": "2026-10-01T17:03:45.835Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "d6095de439aebb062a042e242f93b649b363c140",
+    "commit": "49d9b5964d9804ad67a5397fe2e1918396990298",
     "branch": null,
     "remote": null,
     "anchors": {
-      "ok": 23,
-      "moved": 0,
+      "ok": 20,
+      "moved": 3,
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-01T17:52:10.731Z"
+    "verifiedAt": "2026-10-01T21:48:47.582Z"
   }
 }
