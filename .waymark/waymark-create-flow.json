@@ -17,13 +17,12 @@
           "lineContent": "'waymark_create',",
           "symbol": "waymark_create",
           "id": "1a",
-          "status": "moved",
+          "status": "ok",
           "fileHash": "4b4a77fa736e",
           "snippet": {
             "startLine": 93,
             "code": "  );\n\n  server.registerTool(\n    'waymark_create',\n    {\n      title: 'Create or update a waymark',\n      description:\n        'Validates a waymark, verifies every location against the working tree (auto-correcting shifted line numbers), stores it under .waymark/ and writes a shareable HTML viewer. Pass `id` to overwrite an existing map. Returns an anchor report: fix any unresolved/missing locations and resubmit.',\n      inputSchema: {\n        ...MapInput.shape,\n        id: z.string().optional().describe('Existing waymark id to overwrite'),\n        root: rootArg,\n      },\n    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();"
-          },
-          "note": "line 90 -> 96"
+          }
         },
         {
           "title": "Delegate to store",
@@ -32,13 +31,12 @@
           "lineNumber": 109,
           "lineContent": "const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });",
           "id": "1b",
-          "status": "moved",
+          "status": "ok",
           "fileHash": "4b4a77fa736e",
           "snippet": {
             "startLine": 106,
             "code": "    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,\n        html: htmlPath,\n        json: jsonPath,\n        anchors: report,\n        next: report.healthy\n          ? 'All anchors verified. Share the HTML file or reference waymark://' + doc.id\n          : 'Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".',\n      });\n    }),\n  );\n"
-          },
-          "note": "line 103 -> 109"
+          }
         },
         {
           "title": "Notify resource change",
@@ -47,13 +45,12 @@
           "lineNumber": 110,
           "lineContent": "server.sendResourceListChanged();",
           "id": "1c",
-          "status": "moved",
+          "status": "ok",
           "fileHash": "4b4a77fa736e",
           "snippet": {
             "startLine": 107,
             "code": "    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,\n        html: htmlPath,\n        json: jsonPath,\n        anchors: report,\n        next: report.healthy\n          ? 'All anchors verified. Share the HTML file or reference waymark://' + doc.id\n          : 'Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".',\n      });\n    }),\n  );\n\n  server.registerTool("
-          },
-          "note": "line 104 -> 110"
+          }
         },
         {
           "title": "saveMap",
@@ -175,7 +172,7 @@
           "symbol": "anchorMap",
           "id": "2a",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 152,
             "code": "}\n\n/** Anchors every location of a normalized map in place; returns a summary report. */\nexport function anchorMap(root, map) {\n  const cache = new FileCache(root);\n  const report = { ok: 0, moved: 0, fuzzy: 0, relocated: 0, unresolved: 0, missing: 0, issues: [] };\n  for (const trace of map.traces) {\n    trace.locations = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      report[r.status]++;\n      if (r.status !== 'ok') report.issues.push({ id: r.id, status: r.status, path: r.path, note: r.note });\n      return r;\n    });\n  }\n  report.total = map.traces.reduce((n, t) => n + t.locations.length, 0);\n  report.healthy = report.unresolved === 0 && report.missing === 0;\n  return report;\n}"
@@ -190,7 +187,7 @@
           "symbol": "anchorLocation",
           "id": "2b",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 77,
             "code": " * status: ok | moved (same text, other line) | fuzzy (partial match) | relocated (file moved)\n *         | unresolved (text not found) | missing (file not found)\n */\nexport function anchorLocation(cache, loc) {\n  let relPath = loc.path;\n  let file = cache.read(relPath);\n  let relocatedFrom = null;\n  if (!file) {\n    const alt = cache.findByBasename(relPath);\n    if (alt && (file = cache.read(alt))) {\n      relocatedFrom = relPath;\n      relPath = alt;\n    }\n  }\n  if (!file) {\n    return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };\n  }\n"
@@ -204,7 +201,7 @@
           "lineContent": "const alt = cache.findByBasename(relPath);",
           "id": "2c",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 82,
             "code": "  let file = cache.read(relPath);\n  let relocatedFrom = null;\n  if (!file) {\n    const alt = cache.findByBasename(relPath);\n    if (alt && (file = cache.read(alt))) {\n      relocatedFrom = relPath;\n      relPath = alt;\n    }\n  }\n  if (!file) {\n    return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };\n  }\n\n  const { lines } = file;\n  const wanted = norm(loc.lineContent);\n  const idx0 = Math.min(Math.max(loc.lineNumber - 1, 0), lines.length - 1);\n  let idx = -1;\n  let status = 'unresolved';"
@@ -218,7 +215,7 @@
           "lineContent": "if (!wanted || norm(lines[idx0]) === wanted) {",
           "id": "2d",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 98,
             "code": "  let idx = -1;\n  let status = 'unresolved';\n\n  if (!wanted || norm(lines[idx0]) === wanted) {\n    idx = idx0;\n    status = 'ok';\n  } else {\n    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));\n    if (exact.length) {\n      idx = nearest(exact, idx0);\n      status = 'moved';\n    } else {\n      const partial = [];\n      if (wanted.length >= 6) {\n        lines.forEach((l, i) => {\n          const n = norm(l);\n          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);"
@@ -232,7 +229,7 @@
           "lineContent": "if (exact.length) {",
           "id": "2e",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 104,
             "code": "  } else {\n    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));\n    if (exact.length) {\n      idx = nearest(exact, idx0);\n      status = 'moved';\n    } else {\n      const partial = [];\n      if (wanted.length >= 6) {\n        lines.forEach((l, i) => {\n          const n = norm(l);\n          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);\n        });\n      }\n      if (!partial.length && loc.symbol) {\n        const re = new RegExp(`\\\\b${loc.symbol.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\\b`);\n        lines.forEach((l, i) => re.test(l) && partial.push(i));\n      }"
@@ -246,7 +243,7 @@
           "lineContent": "status = 'fuzzy';",
           "id": "2f",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 121,
             "code": "      }\n      if (partial.length) {\n        idx = nearest(partial, idx0);\n        status = 'fuzzy';\n      }\n    }\n  }\n  if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';\n\n  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);\n  const result = {\n    ...loc,\n    path: relPath,\n    lineNumber: anchorIdx + 1,\n    status,\n    fileHash: file.hash,"
@@ -261,7 +258,7 @@
           "symbol": "safeJoin",
           "id": "2g",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 10,
             "code": "const norm = (s) => (s || '').trim().replace(/\\s+/g, ' ');\n\n/** Resolves a repo-relative path, refusing anything that escapes the root. */\nexport function safeJoin(root, rel) {\n  const abs = path.resolve(root, rel);\n  const relBack = path.relative(root, abs);\n  if (relBack.startsWith('..') || path.isAbsolute(relBack)) {\n    throw new Error(`Path \"${rel}\" is outside the repository root`);\n  }\n  return abs;\n}\n\nexport class FileCache {\n  constructor(root) {\n    this.root = root;\n    this.files = new Map();\n    this._tracked = undefined;\n  }"
@@ -321,7 +318,7 @@
           "symbol": "renderHtml",
           "id": "3a",
           "status": "ok",
-          "fileHash": "32f41e4a74de",
+          "fileHash": "8e4ddeee116b",
           "snippet": {
             "startLine": 9,
             "code": "  JSON.stringify(v).replace(/</g, '\\\\u003c').replace(/[\\u2028\\u2029]/g, ' ');\n\n/** Self-contained, shareable viewer. Only the Mermaid diagram tab needs network (CDN). */\nexport function renderHtml(doc) {\n  const data = {\n    doc,\n    mermaid: renderMermaid(doc, { clickable: true }),\n    markdown: renderMarkdown(doc, { detail: 'compact' }),\n  };\n  return `<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Waymark · ${escHtml(doc.title)}</title>\n<style>${CSS}</style>\n</head>\n<body>"
@@ -336,7 +333,7 @@
           "symbol": "select",
           "id": "3b",
           "status": "ok",
-          "fileHash": "32f41e4a74de",
+          "fileHash": "8e4ddeee116b",
           "snippet": {
             "startLine": 252,
             "code": "\n// ---------- detail ----------\nlet current = null;\nfunction select(id, { push = true } = {}) {\n  const l = byId.get(id); if (!l) return;\n  current = id;\n  document.querySelectorAll('.node.sel').forEach((n) => n.classList.remove('sel'));\n  const node = document.querySelector('.node[data-id=\"' + id + '\"]');\n  if (node) { node.classList.add('sel'); node.closest('.trace').classList.remove('closed'); node.scrollIntoView({ block: 'nearest' }); }\n  const ext = (l.path.split('.').pop() || '').toLowerCase();\n  const code = l.snippet && l.snippet.code != null\n    ? '<pre class=\"code\">' + l.snippet.code.split('\\\\n').map((ln, i) => {\n        const no = l.snippet.startLine + i;\n        return '<span class=\"ln' + (no === l.lineNumber ? ' hl' : '') + '\"><span class=\"no\">' + no + '</span>' + hl(ln, ext) + '</span>';\n      }).join('') + '</pre>'\n    : '<pre class=\"code\"><span class=\"ln hl\"><span class=\"no\">' + l.lineNumber + '</span>' + esc(l.lineContent) + '</span></pre>';\n  const ed = editorUrl(l), rm = remoteUrl(l);\n  const idx = locs.findIndex((x) => x.id === id);"
@@ -349,13 +346,12 @@
           "lineNumber": 202,
           "lineContent": "server.registerResource(",
           "id": "3c",
-          "status": "moved",
+          "status": "ok",
           "fileHash": "4b4a77fa736e",
           "snippet": {
             "startLine": 199,
             "code": "  );\n\n  // @-mentionable context: waymark://<id>\n  server.registerResource(\n    'waymark',\n    new ResourceTemplate('waymark://{id}', {\n      list: async () => ({\n        resources: listMaps(rootOf()).map((m) => ({\n          uri: `waymark://${m.id}`,\n          name: m.title,\n          description: m.description,\n          mimeType: 'text/markdown',\n        })),\n      }),\n      complete: { id: (v) => listMaps(rootOf()).map((m) => m.id).filter((i) => i.startsWith(v)) },\n    }),\n    { title: 'Waymark', description: 'A waymark rendered as markdown context', mimeType: 'text/markdown' },\n    async (uri, { id }) => ({"
-          },
-          "note": "line 196 -> 202"
+          }
         },
         {
           "title": "renderMarkdown",
@@ -453,17 +449,17 @@
     "createdAt": "2026-10-01T16:36:38.822Z",
     "updatedAt": "2026-10-01T16:36:38.822Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": null,
+    "commit": "d6095de439aebb062a042e242f93b649b363c140",
     "branch": null,
     "remote": null,
     "anchors": {
-      "ok": 16,
-      "moved": 4,
+      "ok": 20,
+      "moved": 0,
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-01T17:00:52.582Z"
+    "verifiedAt": "2026-10-01T17:52:11.346Z"
   }
 }

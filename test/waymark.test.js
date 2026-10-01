@@ -190,3 +190,13 @@ test('install wires Claude Code + Codex and is idempotent', async () => {
   assert.match(agentToml, /sandbox_mode = "read-only"/);
   fs.rmSync(target, { recursive: true, force: true });
 });
+
+test('file hashes ignore CRLF vs LF (Windows autocrlf checkouts)', async () => {
+  const { FileCache } = await import('../src/anchor.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waymark-eol-'));
+  fs.writeFileSync(path.join(dir, 'lf.js'), 'a\nb\n');
+  fs.writeFileSync(path.join(dir, 'crlf.js'), 'a\r\nb\r\n');
+  const c = new FileCache(dir);
+  assert.equal(c.read('lf.js').hash, c.read('crlf.js').hash);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

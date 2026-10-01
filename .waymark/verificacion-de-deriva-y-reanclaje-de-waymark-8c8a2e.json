@@ -156,10 +156,10 @@
           "lineNumber": 36,
           "lineContent": "const text = fs.readFileSync(abs, 'utf8');",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 33,
-            "code": "      const abs = safeJoin(this.root, rel);\n      const stat = fs.statSync(abs);\n      if (stat.isFile() && stat.size <= MAX_FILE_BYTES) {\n        const text = fs.readFileSync(abs, 'utf8');\n        entry = {\n          lines: text.split(/\\r?\\n/),\n          hash: crypto.createHash('sha1').update(text).digest('hex').slice(0, 12),\n        };\n      }\n    } catch {\n      entry = null;\n    }\n    this.files.set(rel, entry);\n    return entry;\n  }\n\n  /** Finds a moved/renamed file by basename when the original path is gone. */\n  findByBasename(rel) {"
+            "code": "      const abs = safeJoin(this.root, rel);\n      const stat = fs.statSync(abs);\n      if (stat.isFile() && stat.size <= MAX_FILE_BYTES) {\n        const text = fs.readFileSync(abs, 'utf8');\n        entry = {\n          lines: text.split(/\\r?\\n/),\n          hash: crypto.createHash('sha1').update(text.replace(/\\r\\n/g, '\\n')).digest('hex').slice(0, 12),\n        };\n      }\n    } catch {\n      entry = null;\n    }\n    this.files.set(rel, entry);\n    return entry;\n  }\n\n  /** Finds a moved/renamed file by basename when the original path is gone. */\n  findByBasename(rel) {"
           }
         },
         {
@@ -170,7 +170,7 @@
           "lineNumber": 85,
           "lineContent": "const alt = cache.findByBasename(relPath);",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 82,
             "code": "  let file = cache.read(relPath);\n  let relocatedFrom = null;\n  if (!file) {\n    const alt = cache.findByBasename(relPath);\n    if (alt && (file = cache.read(alt))) {\n      relocatedFrom = relPath;\n      relPath = alt;\n    }\n  }\n  if (!file) {\n    return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };\n  }\n\n  const { lines } = file;\n  const wanted = norm(loc.lineContent);\n  const idx0 = Math.min(Math.max(loc.lineNumber - 1, 0), lines.length - 1);\n  let idx = -1;\n  let status = 'unresolved';"
@@ -184,7 +184,7 @@
           "lineNumber": 92,
           "lineContent": "return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 89,
             "code": "    }\n  }\n  if (!file) {\n    return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };\n  }\n\n  const { lines } = file;\n  const wanted = norm(loc.lineContent);\n  const idx0 = Math.min(Math.max(loc.lineNumber - 1, 0), lines.length - 1);\n  let idx = -1;\n  let status = 'unresolved';\n\n  if (!wanted || norm(lines[idx0]) === wanted) {\n    idx = idx0;\n    status = 'ok';\n  } else {\n    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));"
@@ -198,7 +198,7 @@
           "lineNumber": 101,
           "lineContent": "if (!wanted || norm(lines[idx0]) === wanted) {",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 98,
             "code": "  let idx = -1;\n  let status = 'unresolved';\n\n  if (!wanted || norm(lines[idx0]) === wanted) {\n    idx = idx0;\n    status = 'ok';\n  } else {\n    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));\n    if (exact.length) {\n      idx = nearest(exact, idx0);\n      status = 'moved';\n    } else {\n      const partial = [];\n      if (wanted.length >= 6) {\n        lines.forEach((l, i) => {\n          const n = norm(l);\n          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);"
@@ -212,7 +212,7 @@
           "lineNumber": 108,
           "lineContent": "idx = nearest(exact, idx0);",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 105,
             "code": "    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));\n    if (exact.length) {\n      idx = nearest(exact, idx0);\n      status = 'moved';\n    } else {\n      const partial = [];\n      if (wanted.length >= 6) {\n        lines.forEach((l, i) => {\n          const n = norm(l);\n          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);\n        });\n      }\n      if (!partial.length && loc.symbol) {\n        const re = new RegExp(`\\\\b${loc.symbol.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\\b`);\n        lines.forEach((l, i) => re.test(l) && partial.push(i));\n      }\n      if (partial.length) {"
@@ -226,7 +226,7 @@
           "lineNumber": 118,
           "lineContent": "if (!partial.length && loc.symbol) {",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 115,
             "code": "          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);\n        });\n      }\n      if (!partial.length && loc.symbol) {\n        const re = new RegExp(`\\\\b${loc.symbol.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\\b`);\n        lines.forEach((l, i) => re.test(l) && partial.push(i));\n      }\n      if (partial.length) {\n        idx = nearest(partial, idx0);\n        status = 'fuzzy';\n      }\n    }\n  }\n  if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';\n\n  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);"
@@ -240,7 +240,7 @@
           "lineNumber": 124,
           "lineContent": "status = 'fuzzy';",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 121,
             "code": "      }\n      if (partial.length) {\n        idx = nearest(partial, idx0);\n        status = 'fuzzy';\n      }\n    }\n  }\n  if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';\n\n  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);\n  const result = {\n    ...loc,\n    path: relPath,\n    lineNumber: anchorIdx + 1,\n    status,\n    fileHash: file.hash,"
@@ -254,7 +254,7 @@
           "lineNumber": 128,
           "lineContent": "if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 125,
             "code": "      }\n    }\n  }\n  if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';\n\n  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);\n  const result = {\n    ...loc,\n    path: relPath,\n    lineNumber: anchorIdx + 1,\n    status,\n    fileHash: file.hash,\n    snippet: { startLine: start + 1, code: lines.slice(start, end).join('\\n') },\n  };\n  if (idx >= 0) result.lineContent = lines[anchorIdx].trim();\n  const notes = [];"
@@ -268,7 +268,7 @@
           "lineNumber": 133,
           "lineContent": "const result = {",
           "status": "ok",
-          "fileHash": "2a22985e0606",
+          "fileHash": "dfa36f28dad8",
           "snippet": {
             "startLine": 130,
             "code": "  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);\n  const result = {\n    ...loc,\n    path: relPath,\n    lineNumber: anchorIdx + 1,\n    status,\n    fileHash: file.hash,\n    snippet: { startLine: start + 1, code: lines.slice(start, end).join('\\n') },\n  };\n  if (idx >= 0) result.lineContent = lines[anchorIdx].trim();\n  const notes = [];\n  if (relocatedFrom) notes.push(`file moved from ${relocatedFrom}`);\n  if (status !== 'ok' && status !== 'unresolved' && loc.lineNumber !== anchorIdx + 1) {\n    notes.push(`line ${loc.lineNumber} -> ${anchorIdx + 1}`);\n  }\n  if (status === 'fuzzy') notes.push('partial text match; double-check');"
@@ -475,7 +475,7 @@
     "createdAt": "2026-10-01T17:03:45.835Z",
     "updatedAt": "2026-10-01T17:03:45.835Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": null,
+    "commit": "d6095de439aebb062a042e242f93b649b363c140",
     "branch": null,
     "remote": null,
     "anchors": {
@@ -484,9 +484,8 @@
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
-      "missing": 0,
-      "total": 23,
-      "healthy": true
-    }
+      "missing": 0
+    },
+    "verifiedAt": "2026-10-01T17:52:10.731Z"
   }
 }

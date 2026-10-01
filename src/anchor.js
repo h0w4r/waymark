@@ -36,7 +36,7 @@ export class FileCache {
         const text = fs.readFileSync(abs, 'utf8');
         entry = {
           lines: text.split(/\r?\n/),
-          hash: crypto.createHash('sha1').update(text).digest('hex').slice(0, 12),
+          hash: crypto.createHash('sha1').update(text.replace(/\r\n/g, '\n')).digest('hex').slice(0, 12),
         };
       }
     } catch {
