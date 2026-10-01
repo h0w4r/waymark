@@ -177,12 +177,18 @@ test('install wires Claude Code + Codex and is idempotent', async () => {
   for (const f of [
     '.mcp.json',
     '.claude/agents/waymark.md',
-    '.claude/commands/waymark.md',
     '.claude/skills/waymark/SKILL.md',
     '.codex/agents/waymark.toml',
     '.agents/skills/waymark/SKILL.md',
     '.agents/skills/waymark/agents/openai.yaml',
   ]) assert.ok(fs.existsSync(path.join(target, f)), `missing ${f}`);
+  // The skill is the slash entry point in Claude Code; no duplicate /waymark command.
+  assert.ok(!fs.existsSync(path.join(target, '.claude', 'commands', 'waymark.md')));
+  const claudeSkill = fs.readFileSync(path.join(target, '.claude', 'skills', 'waymark', 'SKILL.md'), 'utf8');
+  assert.match(claudeSkill, /^argument-hint: /m);
+  assert.match(claudeSkill, /\$ARGUMENTS/);
+  const codexSkill = fs.readFileSync(path.join(target, '.agents', 'skills', 'waymark', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(codexSkill, /argument-hint/);
   const agents = fs.readFileSync(path.join(target, 'AGENTS.md'), 'utf8');
   assert.equal(agents.match(/## Waymark/g).length, 1);
   const agentToml = fs.readFileSync(path.join(target, '.codex', 'agents', 'waymark.toml'), 'utf8');

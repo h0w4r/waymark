@@ -37,24 +37,16 @@ ${waymarkGuide('the topic given by the caller')}
 ${AGENT_RETURN}
 `;
 
-const CLAUDE_COMMAND = `---
-description: Create a Waymark map (hierarchical map of code execution) or list/verify existing ones
-argument-hint: "<topic> | list | show <id> | verify [id] | from-chat"
----
-${MARK}
-Arguments: $ARGUMENTS
-
-Follow the **waymark** skill ("Modes" section) with these arguments. For a topic, delegate the exploration to the **waymark** subagent.
-`;
-
 // ---------- shared skill (Claude Code: .claude/skills, Codex: .agents/skills) ----------
 
-const SKILL = `---
+// Claude Code shows skills in the / menu; argument-hint + $ARGUMENTS make `/waymark <topic>` work.
+const SKILL = ({ claude = false } = {}) => `---
 name: waymark
 description: Waymark — create, read, verify and share hierarchical, line-anchored maps of how code executes (traces of numbered locations 1a, 1b… with a call tree, guide and HTML viewer). Use when the user asks how a flow works end-to-end, asks for a code map/diagram/trace of a feature, mentions waymark or waymark://<id>, or before changing code an existing map covers.
----
+${claude ? 'argument-hint: "<topic> | list | show <id> | verify [id] | from-chat"\n' : ''}---
 ${MARK}
 # Waymark
+${claude ? '\nArguments: $ARGUMENTS\n' : ''}
 
 Maps live in \`.waymark/<id>.json\` plus a self-contained \`.waymark/<id>.html\` viewer at the repo root. All writing goes through the \`waymark\` MCP server tools (\`waymark_*\`); never hand-edit those files.
 
@@ -169,8 +161,32 @@ function codexGlobal(serverCmd, written) {
   }
   // User-level skill so the desktop app picks it up in any workspace.
   const dir = path.join(os.homedir(), '.agents', 'skills', 'waymark');
-  writeManaged(path.join(dir, 'SKILL.md'), SKILL, written);
+  writeManaged(path.join(dir, 'SKILL.md'), SKILL(), written);
   writeManaged(path.join(dir, 'agents', 'openai.yaml'), `# ${MARK}\n${CODEX_SKILL_YAML}`, written);
+}
+
+/**
+ * Claude Code user scope: MCP server via `claude mcp add -s user` (no per-project approval)
+ * plus ~/.claude/skills and ~/.claude/agents, so /waymark shows up in every project.
+ */
+function claudeGlobal(serverCmd, written) {
+  const home = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  writeManaged(path.join(home, 'skills', 'waymark', 'SKILL.md'), SKILL({ claude: true }), written);
+  writeManaged(path.join(home, 'agents', 'waymark.md'), CLAUDE_AGENT(), written);
+  removeManaged(path.join(home, 'commands', 'waymark.md'), written);
+  const claude = resolveCommand('claude');
+  if (!claude) {
+    written.push('claude global: `claude` not found on PATH; MCP server not registered');
+    return;
+  }
+  const run = (args) => spawnSync(claude.command, [...claude.args, ...args], { encoding: 'utf8', shell: !!claude.shell });
+  const get = run(['mcp', 'get', 'waymark']);
+  if (get.status === 0 && /scope:s*user/i.test(get.stdout)) {
+    written.push('claude global: user-scoped MCP server "waymark" already registered');
+    return;
+  }
+  const add = run(['mcp', 'add', '-s', 'user', 'waymark', '--', serverCmd.command, ...serverCmd.args]);
+  written.push(add.status === 0 ? 'claude global: registered via `claude mcp add -s user waymark`' : `claude global failed: ${add.stderr || add.stdout}`);
 }
 
 // ---------- AGENTS.md (read by Codex and many other harnesses) ----------
@@ -186,6 +202,13 @@ This repo uses **Waymark**: hierarchical, line-anchored maps of how code execute
 <!-- /waymark -->
 `;
 
+function removeManaged(file, written) {
+  if (fs.existsSync(file) && fs.readFileSync(file, 'utf8').includes('waymark:managed')) {
+    fs.rmSync(file);
+    written.push(`removed (superseded by the skill): ${file}`);
+  }
+}
+
 function writeManaged(file, content, written) {
   if (fs.existsSync(file) && !fs.readFileSync(file, 'utf8').includes('waymark:managed')) {
     written.push(`skipped (user-owned): ${file}`);
@@ -196,7 +219,7 @@ function writeManaged(file, content, written) {
   written.push(`wrote: ${file}`);
 }
 
-export function install({ target, claude = true, codex = true, agentsMd = true, codexGlobal: global = false, useGlobalBin = false }) {
+export function install({ target, claude = true, codex = true, agentsMd = true, codexGlobal: codexGlob = false, claudeGlobal: claudeGlob = false, useGlobalBin = false }) {
   const written = [];
   const serverCmd = useGlobalBin ? { command: 'waymark-mcp', args: [] } : { command: 'node', args: [MCP_ENTRY] };
 
@@ -208,8 +231,8 @@ export function install({ target, claude = true, codex = true, agentsMd = true, 
     fs.writeFileSync(mcpPath, JSON.stringify(cfg, null, 2) + '\n');
     written.push(`wrote: ${mcpPath}`);
     writeManaged(path.join(target, '.claude', 'agents', 'waymark.md'), CLAUDE_AGENT(), written);
-    writeManaged(path.join(target, '.claude', 'commands', 'waymark.md'), CLAUDE_COMMAND, written);
-    writeManaged(path.join(target, '.claude', 'skills', 'waymark', 'SKILL.md'), SKILL, written);
+    removeManaged(path.join(target, '.claude', 'commands', 'waymark.md'), written);
+    writeManaged(path.join(target, '.claude', 'skills', 'waymark', 'SKILL.md'), SKILL({ claude: true }), written);
   }
   if (codex) {
     // Project-scoped config: Codex loads it only for trusted projects.
@@ -220,10 +243,11 @@ export function install({ target, claude = true, codex = true, agentsMd = true, 
     );
     writeManaged(path.join(target, '.codex', 'agents', 'waymark.toml'), CODEX_AGENT(serverCmd), written);
     const skillDir = path.join(target, '.agents', 'skills', 'waymark');
-    writeManaged(path.join(skillDir, 'SKILL.md'), SKILL, written);
+    writeManaged(path.join(skillDir, 'SKILL.md'), SKILL(), written);
     writeManaged(path.join(skillDir, 'agents', 'openai.yaml'), `# ${MARK}\n${CODEX_SKILL_YAML}`, written);
   }
-  if (global) codexGlobal(serverCmd, written);
+  if (codexGlob) codexGlobal(serverCmd, written);
+  if (claudeGlob) claudeGlobal(serverCmd, written);
   if (agentsMd) {
     const p = path.join(target, 'AGENTS.md');
     const cur = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';

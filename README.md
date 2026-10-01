@@ -52,13 +52,23 @@ Escribe (respetando archivos que no son suyos y sin duplicar en reinstalaciones)
 | Archivo | Para |
 |---|---|
 | `.mcp.json` | Claude Code: servidor MCP `waymark` |
-| `.claude/agents/waymark.md`, `.claude/commands/waymark.md`, `.claude/skills/waymark/` | Claude Code: subagente, `/waymark`, skill |
+| `.claude/agents/waymark.md`, `.claude/skills/waymark/` | Claude Code: subagente y skill (aparece como `/waymark`) |
 | `.codex/config.toml` (bloque gestionado) | Codex: servidor MCP `waymark` a nivel proyecto |
 | `.codex/agents/waymark.toml` | Codex: subagente `waymark` (sandbox read-only) |
 | `.agents/skills/waymark/` (+ `agents/openai.yaml`) | Codex: skill `$waymark` |
 | `AGENTS.md` (sección gestionada) | Codex y cualquier harness que lea AGENTS.md |
 
-Flags: `--no-claude`, `--no-codex`, `--no-agents-md`, `--global-bin` (usa el bin `waymark-mcp` tras `npm link`), `--codex-global`.
+Flags: `--no-claude`, `--no-codex`, `--no-agents-md`, `--global-bin` (usa el bin `waymark-mcp` tras `npm link`), `--claude-global`, `--codex-global`, `--global` (ambos).
+
+> **¿No ves `/waymark`?** La instalación por defecto es **por proyecto**: sólo aparece en el repo donde corriste `install` (y en la CLI el servidor de `.mcp.json` queda *pending approval* hasta que lo apruebas). Para tenerlo en **todos** tus proyectos usa el modo global.
+
+### Claude Code (global)
+
+```bash
+waymark install --claude-global
+```
+
+Registra el servidor con `claude mcp add -s user waymark …` (disponible en todos los proyectos, sin aprobación por repo) y copia la skill y el subagente a `~/.claude/skills/waymark` y `~/.claude/agents/waymark.md`. Abre una sesión nueva y escribe `/waymark`.
 
 ### Codex CLI, IDE y desktop
 

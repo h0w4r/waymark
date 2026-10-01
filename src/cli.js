@@ -36,7 +36,9 @@ Usage: waymark <command> [options]
   guide ["<topic>"]      Print the Waymark agent procedure (for any harness)
   install                Wire into a repo for Claude Code + Codex (CLI, IDE, desktop) + AGENTS.md
                          [--target <dir>] [--no-claude] [--no-codex] [--no-agents-md]
-                         [--codex-global]  also register in ~/.codex (codex mcp add) + ~/.agents/skills
+                         [--claude-global] also register for every project: claude mcp add -s user + ~/.claude/skills|agents
+                         [--codex-global]  also register in ~/.codex/config.toml + ~/.agents/skills
+                         [--global]        both of the above
                          [--global-bin]    use the waymark-mcp bin instead of an absolute path
   mcp                    Run the MCP server on stdio
 
@@ -55,6 +57,8 @@ const { values: opt, positionals } = parseArgs({
     approval: { type: 'string' },
     'no-codex': { type: 'boolean' },
     'codex-global': { type: 'boolean' },
+    'claude-global': { type: 'boolean' },
+    global: { type: 'boolean' },
     target: { type: 'string' },
     open: { type: 'boolean' },
     fix: { type: 'boolean' },
@@ -223,7 +227,8 @@ async function main() {
           target: resolveRoot(opt.target || opt.root),
           claude: !opt['no-claude'],
           codex: !opt['no-codex'],
-          codexGlobal: !!opt['codex-global'],
+          codexGlobal: !!(opt['codex-global'] || opt.global),
+          claudeGlobal: !!(opt['claude-global'] || opt.global),
           agentsMd: !opt['no-agents-md'],
           useGlobalBin: !!opt['global-bin'],
         }),
