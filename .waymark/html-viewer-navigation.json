@@ -1,0 +1,582 @@
+{
+  "schemaVersion": 1,
+  "id": "html-viewer-navigation",
+  "title": "HTML viewer: rendering a map and navigating map ↔ diagram ↔ guide",
+  "description": "How renderHtml() turns a map JSON document into a single self-contained HTML file, and how that file's inline script lets a user click through the sidebar tree, jump via guide references, use Prev/Next or arrow keys, and flip to a clickable Mermaid diagram that jumps back into the same node. Key takeaway: there is exactly one navigation primitive, select(id) in html.js, and every other interaction (sidebar clicks, guide [refs], nav buttons, keyboard, and Mermaid node clicks via window.mapSelect) is just a different trigger that calls it.",
+  "query": "How does the HTML viewer render a map and navigate between nodes, the diagram and the guide?",
+  "traces": [
+    {
+      "id": "1",
+      "title": "Build time: assembling the self-contained viewer file",
+      "description": "writeHtml() in store.js calls renderHtml(doc), which precomputes a clickable Mermaid source and a compact markdown dump, inlines all three (doc, mermaid, markdown) as JSON inside a <script> tag, and emits one static HTML file with CSS and JS baked in. When that file is opened, its own inline script immediately parses the embedded JSON back out and flattens every location into a lookup array/map used by all later navigation.",
+      "locations": [
+        {
+          "id": "1a",
+          "title": "writeHtml persists rendered HTML",
+          "description": "Writes the output of renderHtml(doc) straight to <id>.html next to the JSON map; no templating file, the whole viewer is generated in memory.",
+          "path": "src/store.js",
+          "lineNumber": 59,
+          "lineContent": "fs.writeFileSync(p, renderHtml(doc));",
+          "symbol": "writeHtml",
+          "status": "ok",
+          "fileHash": "5e4089da9400",
+          "snippet": {
+            "startLine": 56,
+            "code": "\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc));\n  return p;\n}\n\nexport function persist(root, doc) {\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n}\n\nexport function loadMap(root, id, { quiet = false } = {}) {\n  let p;\n  try {\n    p = filePath(root, id);\n  } catch (e) {\n    if (quiet) return null;\n    throw e;"
+          }
+        },
+        {
+          "id": "1b",
+          "title": "renderHtml entry point",
+          "description": "Takes the normalized map doc and returns a full HTML document string with CSS/JS inlined; this is the only function that builds the viewer.",
+          "path": "src/render/html.js",
+          "lineNumber": 12,
+          "lineContent": "export function renderHtml(doc) {",
+          "symbol": "renderHtml",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 9,
+            "code": "  JSON.stringify(v).replace(/</g, '\\\\u003c').replace(/[\\u2028\\u2029]/g, ' ');\n\n/** Self-contained, shareable viewer. Only the Mermaid diagram tab needs network (CDN). */\nexport function renderHtml(doc) {\n  const data = {\n    doc,\n    mermaid: renderMermaid(doc, { clickable: true }),\n    markdown: renderMarkdown(doc, { detail: 'compact' }),\n  };\n  return `<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Waymark · ${escHtml(doc.title)}</title>\n<style>${CSS}</style>\n</head>\n<body>"
+          }
+        },
+        {
+          "id": "1c",
+          "title": "Precompute clickable Mermaid source",
+          "description": "Calls renderMermaid with clickable:true so diagram nodes get `click ... call waymarkSelect(...)` bindings baked into the generated flowchart text (trace 3).",
+          "path": "src/render/html.js",
+          "lineNumber": 15,
+          "lineContent": "mermaid: renderMermaid(doc, { clickable: true }),",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 12,
+            "code": "export function renderHtml(doc) {\n  const data = {\n    doc,\n    mermaid: renderMermaid(doc, { clickable: true }),\n    markdown: renderMarkdown(doc, { detail: 'compact' }),\n  };\n  return `<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Waymark · ${escHtml(doc.title)}</title>\n<style>${CSS}</style>\n</head>\n<body>\n<header>\n  <div class=\"hgroup\">\n    <div class=\"eyebrow\">WAYMARK</div>"
+          }
+        },
+        {
+          "id": "1d",
+          "title": "Precompute compact markdown",
+          "description": "Pre-renders a compact markdown context dump used later by the 'Copy context' button, so the browser never needs to re-serialize the doc.",
+          "path": "src/render/html.js",
+          "lineNumber": 16,
+          "lineContent": "markdown: renderMarkdown(doc, { detail: 'compact' }),",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 13,
+            "code": "  const data = {\n    doc,\n    mermaid: renderMermaid(doc, { clickable: true }),\n    markdown: renderMarkdown(doc, { detail: 'compact' }),\n  };\n  return `<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Waymark · ${escHtml(doc.title)}</title>\n<style>${CSS}</style>\n</head>\n<body>\n<header>\n  <div class=\"hgroup\">\n    <div class=\"eyebrow\">WAYMARK</div>\n    <h1>${escHtml(doc.title)}</h1>"
+          }
+        },
+        {
+          "id": "1e",
+          "title": "Inline data as escaped JSON",
+          "description": "The {doc, mermaid, markdown} bundle is JSON-stringified via inlineJson (escaping < and line separators) and embedded in a <script type=\"application/json\"> tag — the only payload the page carries.",
+          "path": "src/render/html.js",
+          "lineNumber": 59,
+          "lineContent": "<script id=\"waymark-data\" type=\"application/json\">${inlineJson(data)}</script>",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 56,
+            "code": "<main id=\"view-diagram\" hidden>\n  <div id=\"diagram\"><pre class=\"mmd-src\"></pre></div>\n</main>\n<script id=\"waymark-data\" type=\"application/json\">${inlineJson(data)}</script>\n<script>${JS}</script>\n</body>\n</html>`;\n}\n\nconst CSS = `\n:root{--bg:#fbfbfa;--panel:#fff;--ink:#1d1f23;--muted:#6b7078;--line:#e6e6e3;--accent:#3a5ccc;--accent-soft:#e9eefc;\n--warn:#b26b00;--bad:#c23b3b;--code-bg:#f6f7f9;--hl:#fff6d6;--kw:#8a3ab9;--str:#2e7d32;--com:#8b8f97;--num:#b5520b;\n--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:-apple-system,BlinkMacSystemFont,\"Segoe UI\",Inter,Roboto,sans-serif}\n@media (prefers-color-scheme:dark){:root{--bg:#141518;--panel:#1b1d21;--ink:#e6e7ea;--muted:#959aa3;--line:#2c2f35;\n--accent:#8aa4ff;--accent-soft:#232b45;--code-bg:#16181c;--hl:#3a3418;--kw:#d199ff;--str:#8fd694;--com:#6d727b;--num:#f0a868}}\n*{box-sizing:border-box}html,body{margin:0;height:100%}\nbody{background:var(--bg);color:var(--ink);font:14px/1.5 var(--sans);display:flex;flex-direction:column}\nheader{display:flex;gap:24px;justify-content:space-between;align-items:flex-start;padding:18px 24px 14px;border-bottom:1px solid var(--line);background:var(--panel)}"
+          }
+        },
+        {
+          "id": "1f",
+          "title": "Client parses embedded data",
+          "description": "On load, the inline client script reads the JSON script tag's text content and parses it back into doc, mmdSrc and markdown — the only data the rest of the page ever touches.",
+          "path": "src/render/html.js",
+          "lineNumber": 144,
+          "lineContent": "const { doc, mermaid: mmdSrc, markdown } = JSON.parse(document.getElementById('waymark-data').textContent);",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 141,
+            "code": "\nconst JS = `\n(() => {\nconst { doc, mermaid: mmdSrc, markdown } = JSON.parse(document.getElementById('waymark-data').textContent);\nconst $ = (s) => document.querySelector(s);\nconst esc = (s) => String(s ?? '').replace(/[&<>\"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'})[c]);\nconst locs = [], byId = new Map();\nfor (const t of doc.traces) for (const l of t.locations) { const x = { ...l, trace: t }; locs.push(x); byId.set(l.id, x); }\nconst meta = doc.meta || {};\nconst storeKey = 'waymark:' + doc.id;\nconst prefs = Object.assign({ root: meta.root || '', editor: 'vscode' }, JSON.parse(localStorage.getItem(storeKey) || '{}'));\n\n// ---------- chips ----------\nconst a = meta.anchors || {};\nconst chips = [];\nif (meta.commit) chips.push('<span class=\"chip\" title=\"' + esc(meta.commit) + '\">@ ' + esc(meta.commit.slice(0, 8)) + (meta.branch ? ' · ' + esc(meta.branch) : '') + '</span>');\nif (meta.updatedAt) chips.push('<span class=\"chip\">' + esc(meta.updatedAt.slice(0, 16).replace('T', ' ')) + '</span>');\nchips.push('<span class=\"chip\">' + doc.traces.length + ' traces · ' + locs.length + ' nodes</span>');"
+          }
+        },
+        {
+          "id": "1g",
+          "title": "Flatten locations for lookup",
+          "description": "Builds locs[] (ordered array, for Prev/Next and keyboard nav) and byId Map (for O(1) id → location lookup) from every trace's locations; every later navigation action goes through one of these two structures.",
+          "path": "src/render/html.js",
+          "lineNumber": 148,
+          "lineContent": "for (const t of doc.traces) for (const l of t.locations) { const x = { ...l, trace: t }; locs.push(x); byId.set(l.id, x); }",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 145,
+            "code": "const $ = (s) => document.querySelector(s);\nconst esc = (s) => String(s ?? '').replace(/[&<>\"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',\"'\":'&#39;'})[c]);\nconst locs = [], byId = new Map();\nfor (const t of doc.traces) for (const l of t.locations) { const x = { ...l, trace: t }; locs.push(x); byId.set(l.id, x); }\nconst meta = doc.meta || {};\nconst storeKey = 'waymark:' + doc.id;\nconst prefs = Object.assign({ root: meta.root || '', editor: 'vscode' }, JSON.parse(localStorage.getItem(storeKey) || '{}'));\n\n// ---------- chips ----------\nconst a = meta.anchors || {};\nconst chips = [];\nif (meta.commit) chips.push('<span class=\"chip\" title=\"' + esc(meta.commit) + '\">@ ' + esc(meta.commit.slice(0, 8)) + (meta.branch ? ' · ' + esc(meta.branch) : '') + '</span>');\nif (meta.updatedAt) chips.push('<span class=\"chip\">' + esc(meta.updatedAt.slice(0, 16).replace('T', ' ')) + '</span>');\nchips.push('<span class=\"chip\">' + doc.traces.length + ' traces · ' + locs.length + ' nodes</span>');\nconst broken = (a.unresolved || 0) + (a.missing || 0);\nif (broken) chips.push('<span class=\"chip bad\">' + broken + ' unverified anchors</span>');\nif (a.fuzzy) chips.push('<span class=\"chip warn\">' + a.fuzzy + ' approximate</span>');\nif (doc.query) chips.push('<span class=\"chip\" title=\"Prompt\">“' + esc(doc.query) + '”</span>');"
+          }
+        }
+      ],
+      "tree": [
+        {
+          "ref": "1a",
+          "children": [
+            {
+              "ref": "1b",
+              "children": [
+                {
+                  "ref": "1c"
+                },
+                {
+                  "ref": "1d"
+                },
+                {
+                  "ref": "1e",
+                  "children": [
+                    {
+                      "ref": "1f",
+                      "children": [
+                        {
+                          "ref": "1g"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "guide": "The whole viewer is one function: [1b] called from [1a] at save time. It front-loads two renderings — a clickable Mermaid flowchart [1c] (feeds trace 3) and a compact markdown dump [1d] (feeds the 'Copy context' button) — then inlines everything as JSON [1e]. There is no server and no build step for the viewer itself: the file is fully self-contained.\n\nWhen a user opens the HTML file, its bundled script immediately reverses step [1e]: it parses the JSON back out [1f] and flattens all locations into `locs` and `byId` [1g]. Every navigation feature in traces 2 and 3 operates purely on these two in-memory structures — there is no further fetching or re-parsing."
+    },
+    {
+      "id": "2",
+      "title": "Map tab: sidebar tree, selecting a node, and guide links",
+      "description": "The sidebar is rendered once from the trace tree, then a single delegated click listener handles both expanding/collapsing traces and selecting a node. Selecting a node is the one real navigation primitive: it renders the code snippet, the guide (with [1a]-style references turned into clickable links), and Prev/Next buttons, then syncs the URL hash so the view is bookmarkable. Sidebar clicks, guide links, nav buttons, keyboard arrows and the initial page load all end up calling this same function.",
+      "locations": [
+        {
+          "id": "2a",
+          "title": "treeHtml renders the call tree",
+          "description": "Recursively turns a trace's tree (refs + label-only group nodes) into nested <ul> markup, each real node showing its id, title, path:line and any anchor-status badge.",
+          "path": "src/render/html.js",
+          "lineNumber": 232,
+          "lineContent": "return '<ul class=\"tree\">' + nodes.map((n) => {",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 229,
+            "code": "const STATUS = { fuzzy: '≈', unresolved: '⚠', missing: '⚠' };\nfunction treeHtml(nodes, trace) {\n  if (!nodes || !nodes.length) return '';\n  return '<ul class=\"tree\">' + nodes.map((n) => {\n    const l = n.ref && byId.get(n.ref);\n    const inner = l\n      ? '<div class=\"node\" data-id=\"' + l.id + '\"><span class=\"id\">' + l.id + '</span><span class=\"nt\">' + esc(n.label || l.title)\n        + (STATUS[l.status] ? '<span class=\"st ' + l.status + '\" title=\"' + esc(l.note || l.status) + '\">' + STATUS[l.status] + '</span>' : '')\n        + '<span class=\"loc\">' + esc(l.path) + ':' + l.lineNumber + '</span></span></div>'\n      : '<div class=\"node label\">' + esc(n.label || '…') + '</div>';\n    return '<li>' + inner + treeHtml(n.children, trace) + '</li>';\n  }).join('') + '</ul>';\n}\n$('#sidebar').innerHTML = doc.traces.map((t) =>\n  '<div class=\"trace\" data-trace=\"' + esc(t.id) + '\"><div class=\"trace-h\"><span class=\"tnum\">' + esc(t.id) + '</span><div><div class=\"trace-t\">'\n  + esc(t.title) + '</div><div class=\"trace-d\">' + esc(t.description) + '</div></div><span class=\"caret\">▾</span></div>'\n  + treeHtml(t.tree, t) + '</div>').join('');\n$('#sidebar').addEventListener('click', (e) => {"
+          }
+        },
+        {
+          "id": "2b",
+          "title": "Sidebar built per trace",
+          "description": "Builds the whole #sidebar innerHTML in one pass: one collapsible header per trace plus its rendered tree from treeHtml.",
+          "path": "src/render/html.js",
+          "lineNumber": 242,
+          "lineContent": "$('#sidebar').innerHTML = doc.traces.map((t) =>",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 239,
+            "code": "    return '<li>' + inner + treeHtml(n.children, trace) + '</li>';\n  }).join('') + '</ul>';\n}\n$('#sidebar').innerHTML = doc.traces.map((t) =>\n  '<div class=\"trace\" data-trace=\"' + esc(t.id) + '\"><div class=\"trace-h\"><span class=\"tnum\">' + esc(t.id) + '</span><div><div class=\"trace-t\">'\n  + esc(t.title) + '</div><div class=\"trace-d\">' + esc(t.description) + '</div></div><span class=\"caret\">▾</span></div>'\n  + treeHtml(t.tree, t) + '</div>').join('');\n$('#sidebar').addEventListener('click', (e) => {\n  const node = e.target.closest('.node[data-id]');\n  if (node) return select(node.dataset.id);\n  const th = e.target.closest('.trace-h');\n  if (th) th.parentElement.classList.toggle('closed');\n});\n\n// ---------- detail ----------\nlet current = null;\nfunction select(id, { push = true } = {}) {\n  const l = byId.get(id); if (!l) return;"
+          }
+        },
+        {
+          "id": "2c",
+          "title": "Sidebar click delegate",
+          "description": "One listener on #sidebar: clicking a .node selects it, clicking a trace header toggles that trace's collapsed state — no per-node listeners.",
+          "path": "src/render/html.js",
+          "lineNumber": 246,
+          "lineContent": "$('#sidebar').addEventListener('click', (e) => {",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 243,
+            "code": "  '<div class=\"trace\" data-trace=\"' + esc(t.id) + '\"><div class=\"trace-h\"><span class=\"tnum\">' + esc(t.id) + '</span><div><div class=\"trace-t\">'\n  + esc(t.title) + '</div><div class=\"trace-d\">' + esc(t.description) + '</div></div><span class=\"caret\">▾</span></div>'\n  + treeHtml(t.tree, t) + '</div>').join('');\n$('#sidebar').addEventListener('click', (e) => {\n  const node = e.target.closest('.node[data-id]');\n  if (node) return select(node.dataset.id);\n  const th = e.target.closest('.trace-h');\n  if (th) th.parentElement.classList.toggle('closed');\n});\n\n// ---------- detail ----------\nlet current = null;\nfunction select(id, { push = true } = {}) {\n  const l = byId.get(id); if (!l) return;\n  current = id;\n  document.querySelectorAll('.node.sel').forEach((n) => n.classList.remove('sel'));\n  const node = document.querySelector('.node[data-id=\"' + id + '\"]');\n  if (node) { node.classList.add('sel'); node.closest('.trace').classList.remove('closed'); node.scrollIntoView({ block: 'nearest' }); }"
+          }
+        },
+        {
+          "id": "2d",
+          "title": "select(id): the navigation primitive",
+          "description": "Looks up the location by id, bails if unknown, and becomes the single source of truth for 'what is currently shown' (the `current` variable); every other interaction in the viewer ultimately calls this.",
+          "path": "src/render/html.js",
+          "lineNumber": 255,
+          "lineContent": "function select(id, { push = true } = {}) {",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 252,
+            "code": "\n// ---------- detail ----------\nlet current = null;\nfunction select(id, { push = true } = {}) {\n  const l = byId.get(id); if (!l) return;\n  current = id;\n  document.querySelectorAll('.node.sel').forEach((n) => n.classList.remove('sel'));\n  const node = document.querySelector('.node[data-id=\"' + id + '\"]');\n  if (node) { node.classList.add('sel'); node.closest('.trace').classList.remove('closed'); node.scrollIntoView({ block: 'nearest' }); }\n  const ext = (l.path.split('.').pop() || '').toLowerCase();\n  const code = l.snippet && l.snippet.code != null\n    ? '<pre class=\"code\">' + l.snippet.code.split('\\\\n').map((ln, i) => {\n        const no = l.snippet.startLine + i;\n        return '<span class=\"ln' + (no === l.lineNumber ? ' hl' : '') + '\"><span class=\"no\">' + no + '</span>' + hl(ln, ext) + '</span>';\n      }).join('') + '</pre>'\n    : '<pre class=\"code\"><span class=\"ln hl\"><span class=\"no\">' + l.lineNumber + '</span>' + esc(l.lineContent) + '</span></pre>';\n  const ed = editorUrl(l), rm = remoteUrl(l);\n  const idx = locs.findIndex((x) => x.id === id);"
+          }
+        },
+        {
+          "id": "2e",
+          "title": "Render highlighted code snippet",
+          "description": "Builds the <pre class=\"code\"> block from the location's stored snippet (or just the single lineContent if no snippet), tokenizing each line with the tiny regex-based highlighter hl().",
+          "path": "src/render/html.js",
+          "lineNumber": 262,
+          "lineContent": "const code = l.snippet && l.snippet.code != null",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 259,
+            "code": "  const node = document.querySelector('.node[data-id=\"' + id + '\"]');\n  if (node) { node.classList.add('sel'); node.closest('.trace').classList.remove('closed'); node.scrollIntoView({ block: 'nearest' }); }\n  const ext = (l.path.split('.').pop() || '').toLowerCase();\n  const code = l.snippet && l.snippet.code != null\n    ? '<pre class=\"code\">' + l.snippet.code.split('\\\\n').map((ln, i) => {\n        const no = l.snippet.startLine + i;\n        return '<span class=\"ln' + (no === l.lineNumber ? ' hl' : '') + '\"><span class=\"no\">' + no + '</span>' + hl(ln, ext) + '</span>';\n      }).join('') + '</pre>'\n    : '<pre class=\"code\"><span class=\"ln hl\"><span class=\"no\">' + l.lineNumber + '</span>' + esc(l.lineContent) + '</span></pre>';\n  const ed = editorUrl(l), rm = remoteUrl(l);\n  const idx = locs.findIndex((x) => x.id === id);\n  const links = (doc.links || []).filter((k) => k.from === id || k.to === id);\n  $('#detail').innerHTML =\n    '<div class=\"crumb\">Trace ' + esc(l.trace.id) + ' · ' + esc(l.trace.title) + '</div>'\n    + '<div class=\"dh\"><span class=\"id\">' + l.id + '</span><h2>' + esc(l.title) + '</h2></div>'\n    + '<p class=\"ddesc\">' + inline(l.description) + '</p>'\n    + '<div class=\"where\"><code>' + esc(l.path) + ':' + l.lineNumber + '</code>' + (l.symbol ? '<code>' + esc(l.symbol) + '</code>' : '')\n    + (ed ? '<a href=\"' + esc(ed) + '\">Open in editor</a>' : '') + (rm ? '<a href=\"' + esc(rm) + '\" target=\"_blank\" rel=\"noopener\">View on remote</a>' : '')"
+          }
+        },
+        {
+          "id": "2f",
+          "title": "Assemble #detail panel",
+          "description": "Concatenates breadcrumb, title, description, editor/remote links, the code block, cross-trace links, Prev/Next buttons, and the trace's guide (rendered via the mini markdown renderer md()) into #detail's innerHTML.",
+          "path": "src/render/html.js",
+          "lineNumber": 271,
+          "lineContent": "$('#detail').innerHTML =",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 268,
+            "code": "  const ed = editorUrl(l), rm = remoteUrl(l);\n  const idx = locs.findIndex((x) => x.id === id);\n  const links = (doc.links || []).filter((k) => k.from === id || k.to === id);\n  $('#detail').innerHTML =\n    '<div class=\"crumb\">Trace ' + esc(l.trace.id) + ' · ' + esc(l.trace.title) + '</div>'\n    + '<div class=\"dh\"><span class=\"id\">' + l.id + '</span><h2>' + esc(l.title) + '</h2></div>'\n    + '<p class=\"ddesc\">' + inline(l.description) + '</p>'\n    + '<div class=\"where\"><code>' + esc(l.path) + ':' + l.lineNumber + '</code>' + (l.symbol ? '<code>' + esc(l.symbol) + '</code>' : '')\n    + (ed ? '<a href=\"' + esc(ed) + '\">Open in editor</a>' : '') + (rm ? '<a href=\"' + esc(rm) + '\" target=\"_blank\" rel=\"noopener\">View on remote</a>' : '')\n    + '</div>' + (l.note ? '<div class=\"note\">' + esc(l.note) + '</div>' : '') + code\n    + (links.length ? '<ul class=\"links\">' + links.map((k) => '<li>' + (k.from === id ? '→ ' : '← ') + '<a class=\"ref\" data-ref=\"' + (k.from === id ? k.to : k.from) + '\">' + (k.from === id ? k.to : k.from) + '</a> ' + esc(k.label || '') + '</li>').join('') + '</ul>' : '')\n    + '<div class=\"nav\"><button data-go=\"' + (idx - 1) + '\"' + (idx <= 0 ? ' disabled' : '') + '>← Prev</button><button data-go=\"' + (idx + 1) + '\"' + (idx >= locs.length - 1 ? ' disabled' : '') + '>Next →</button></div>'\n    + (l.trace.guide ? '<div class=\"guide\"><h3>Trace ' + esc(l.trace.id) + ' guide</h3>' + md(l.trace.guide) + '</div>' : '');\n  if (push) history.replaceState(null, '', '#' + id);\n}\n$('#detail').addEventListener('click', (e) => {\n  const r = e.target.closest('[data-ref]'); if (r) return select(r.dataset.ref);\n  const g = e.target.closest('[data-go]'); if (g && locs[+g.dataset.go]) select(locs[+g.dataset.go].id);"
+          }
+        },
+        {
+          "id": "2g",
+          "title": "Guide refs become clickable",
+          "description": "inline()'s regex rewrites [1a]-style references inside descriptions/guides into <a class=\"ref\" data-ref=\"1a\"> anchors, but only if that id exists in byId — this is how the markdown guide becomes navigable.",
+          "path": "src/render/html.js",
+          "lineNumber": 208,
+          "lineContent": ".replace(/\\\\[(\\\\d+[a-z]{1,2})\\\\]/g, (m, id) => byId.has(id) ? '<a class=\"ref\" data-ref=\"' + id + '\">' + id + '</a>' : m);",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 205,
+            "code": "    .replace(/\\`([^\\`]+)\\`/g, '<code>$1</code>')\n    .replace(/\\\\*\\\\*([^*]+)\\\\*\\\\*/g, '<strong>$1</strong>')\n    .replace(/(^|[^*])\\\\*([^*]+)\\\\*/g, '$1<em>$2</em>')\n    .replace(/\\\\[(\\\\d+[a-z]{1,2})\\\\]/g, (m, id) => byId.has(id) ? '<a class=\"ref\" data-ref=\"' + id + '\">' + id + '</a>' : m);\n}\nfunction md(src) {\n  const out = []; let list = null, para = [], code = null;\n  const flush = () => { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } if (list) { out.push('</' + list + '>'); list = null; } };\n  for (const raw of String(src || '').split(/\\\\r?\\\\n/)) {\n    if (code !== null) { if (/^\\`\\`\\`/.test(raw)) { out.push('<pre><code>' + esc(code.join('\\\\n')) + '</code></pre>'); code = null; } else code.push(raw); continue; }\n    if (/^\\`\\`\\`/.test(raw)) { flush(); code = []; continue; }\n    const h = raw.match(/^(#{1,4})\\\\s+(.*)/); if (h) { flush(); out.push('<h4>' + inline(h[2]) + '</h4>'); continue; }\n    const li = raw.match(/^\\\\s*([-*]|\\\\d+\\\\.)\\\\s+(.*)/);\n    if (li) { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } const kind = /\\\\d/.test(li[1]) ? 'ol' : 'ul'; if (list !== kind) { if (list) out.push('</' + list + '>'); out.push('<' + kind + '>'); list = kind; } out.push('<li>' + inline(li[2]) + '</li>'); continue; }\n    if (!raw.trim()) { flush(); continue; }\n    if (list) { out.push('</' + list + '>'); list = null; }\n    para.push(raw.trim());\n  }"
+          }
+        },
+        {
+          "id": "2j",
+          "title": "Hash reflects current selection",
+          "description": "After rendering, select() replaces the URL hash with the node id (unless suppressed), making every view directly linkable/bookmarkable without adding browser history entries.",
+          "path": "src/render/html.js",
+          "lineNumber": 281,
+          "lineContent": "if (push) history.replaceState(null, '', '#' + id);",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 278,
+            "code": "    + (links.length ? '<ul class=\"links\">' + links.map((k) => '<li>' + (k.from === id ? '→ ' : '← ') + '<a class=\"ref\" data-ref=\"' + (k.from === id ? k.to : k.from) + '\">' + (k.from === id ? k.to : k.from) + '</a> ' + esc(k.label || '') + '</li>').join('') + '</ul>' : '')\n    + '<div class=\"nav\"><button data-go=\"' + (idx - 1) + '\"' + (idx <= 0 ? ' disabled' : '') + '>← Prev</button><button data-go=\"' + (idx + 1) + '\"' + (idx >= locs.length - 1 ? ' disabled' : '') + '>Next →</button></div>'\n    + (l.trace.guide ? '<div class=\"guide\"><h3>Trace ' + esc(l.trace.id) + ' guide</h3>' + md(l.trace.guide) + '</div>' : '');\n  if (push) history.replaceState(null, '', '#' + id);\n}\n$('#detail').addEventListener('click', (e) => {\n  const r = e.target.closest('[data-ref]'); if (r) return select(r.dataset.ref);\n  const g = e.target.closest('[data-go]'); if (g && locs[+g.dataset.go]) select(locs[+g.dataset.go].id);\n});\ndocument.addEventListener('keydown', (e) => {\n  if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;\n  const i = locs.findIndex((x) => x.id === current);\n  if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); if (locs[i + 1]) select(locs[i + 1].id); }\n  if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); if (i > 0) select(locs[i - 1].id); }\n});\nwindow.waymarkSelect = (id) => { showTab('map'); select(id); };\n\n// ---------- tabs / diagram ----------"
+          }
+        },
+        {
+          "id": "2h",
+          "title": "Detail click delegate",
+          "description": "One listener on #detail handles both guide/cross-link ref anchors (data-ref) and the Prev/Next buttons (data-go), both resolving to a select() call.",
+          "path": "src/render/html.js",
+          "lineNumber": 283,
+          "lineContent": "$('#detail').addEventListener('click', (e) => {",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 280,
+            "code": "    + (l.trace.guide ? '<div class=\"guide\"><h3>Trace ' + esc(l.trace.id) + ' guide</h3>' + md(l.trace.guide) + '</div>' : '');\n  if (push) history.replaceState(null, '', '#' + id);\n}\n$('#detail').addEventListener('click', (e) => {\n  const r = e.target.closest('[data-ref]'); if (r) return select(r.dataset.ref);\n  const g = e.target.closest('[data-go]'); if (g && locs[+g.dataset.go]) select(locs[+g.dataset.go].id);\n});\ndocument.addEventListener('keydown', (e) => {\n  if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;\n  const i = locs.findIndex((x) => x.id === current);\n  if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); if (locs[i + 1]) select(locs[i + 1].id); }\n  if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); if (i > 0) select(locs[i - 1].id); }\n});\nwindow.waymarkSelect = (id) => { showTab('map'); select(id); };\n\n// ---------- tabs / diagram ----------\nlet mermaidDone = false;\nasync function drawDiagram() {"
+          }
+        },
+        {
+          "id": "2i",
+          "title": "Keyboard navigation",
+          "description": "Document-level keydown handler: ArrowDown/j and ArrowUp/k step through locs[] sequentially (skipped while typing in an input), another path into select().",
+          "path": "src/render/html.js",
+          "lineNumber": 290,
+          "lineContent": "if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); if (locs[i + 1]) select(locs[i + 1].id); }",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 287,
+            "code": "document.addEventListener('keydown', (e) => {\n  if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;\n  const i = locs.findIndex((x) => x.id === current);\n  if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); if (locs[i + 1]) select(locs[i + 1].id); }\n  if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); if (i > 0) select(locs[i - 1].id); }\n});\nwindow.waymarkSelect = (id) => { showTab('map'); select(id); };\n\n// ---------- tabs / diagram ----------\nlet mermaidDone = false;\nasync function drawDiagram() {\n  if (mermaidDone) return; mermaidDone = true;\n  const box = $('#diagram');\n  box.querySelector('.mmd-src').textContent = mmdSrc;\n  try {\n    const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');\n    const dark = matchMedia('(prefers-color-scheme: dark)').matches;\n    mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: dark ? 'dark' : 'neutral', flowchart: { htmlLabels: true, curve: 'basis' } });"
+          }
+        },
+        {
+          "id": "2k",
+          "title": "Initial selection on load",
+          "description": "On first paint, the URL hash (if it names a known location) picks the initially selected node, otherwise the first location in locs[] is shown.",
+          "path": "src/render/html.js",
+          "lineNumber": 331,
+          "lineContent": "select(byId.has(initial) ? initial : locs[0].id, { push: false });",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 328,
+            "code": "};\n\nconst initial = decodeURIComponent(location.hash.slice(1));\nselect(byId.has(initial) ? initial : locs[0].id, { push: false });\n})();\n`;\n"
+          }
+        }
+      ],
+      "tree": [
+        {
+          "ref": "2b",
+          "children": [
+            {
+              "ref": "2a"
+            },
+            {
+              "ref": "2c",
+              "children": [
+                {
+                  "ref": "2d",
+                  "children": [
+                    {
+                      "ref": "2e"
+                    },
+                    {
+                      "ref": "2f",
+                      "children": [
+                        {
+                          "ref": "2g"
+                        }
+                      ]
+                    },
+                    {
+                      "ref": "2j"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "ref": "2h"
+        },
+        {
+          "ref": "2i"
+        },
+        {
+          "ref": "2k"
+        }
+      ],
+      "guide": "The sidebar is static markup generated once [2b] from each trace's tree [2a]; a single delegated click handler [2c] does the interactive part, calling [2d] `select(id)` for a node or just toggling a trace's `.closed` class for a header. `select()` is where everything converges: it renders the snippet [2e], assembles the whole detail panel [2f] — including the guide text, whose `[1a]`-style references are rewritten into clickable links by [2g] — and finally updates the URL hash [2j] so the state is shareable.\n\nThree other triggers all just call [2d] with a different id: clicking a guide/cross-link ref or a Prev/Next button inside #detail [2h], pressing arrow keys or j/k anywhere [2i], and the very first render on page load, which seeds itself from `location.hash` [2k]. None of them know about rendering — they only ever compute an id and hand it to `select`."
+    },
+    {
+      "id": "3",
+      "title": "Diagram tab: clickable Mermaid flowchart",
+      "description": "renderMermaid(doc) turns the same trace/location/link data into Mermaid flowchart syntax: one subgraph per trace, one node per location, edges from the trace's tree, and dashed edges for cross-trace links. When built with clickable:true (as it is for the HTML viewer, see [1c]), every node also gets a `click ... call mapSelect(...)` binding. The diagram is only drawn lazily, the first time the Diagram tab is opened, and clicking a node bridges back into the Map tab's select() flow from trace 2.",
+      "locations": [
+        {
+          "id": "3a",
+          "title": "renderMermaid entry",
+          "description": "Builds the flowchart text top to bottom: a 'flowchart TD' header, then one subgraph block per trace, then cross-trace links, then optional click bindings.",
+          "path": "src/render/mermaid.js",
+          "lineNumber": 5,
+          "lineContent": "export function renderMermaid(doc, { clickable = false } = {}) {",
+          "symbol": "renderMermaid",
+          "status": "ok",
+          "fileHash": "2f4681b91ccb",
+          "snippet": {
+            "startLine": 2,
+            "code": "const esc = (s) => String(s).replace(/\"/g, '#quot;').replace(/[<>]/g, (c) => (c === '<' ? '#lt;' : '#gt;'));\n\n/** Flowchart: one subgraph per trace, edges follow the trace tree, plus cross-trace links. */\nexport function renderMermaid(doc, { clickable = false } = {}) {\n  if (doc.diagram && !clickable) return doc.diagram;\n  const out = ['flowchart TD'];\n  const byId = new Map(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, l])));\n  let labelSeq = 0;\n\n  for (const trace of doc.traces) {\n    out.push(`  subgraph T${trace.id}[\"${trace.id}. ${esc(trace.title)}\"]`);\n    out.push('    direction TB');\n    for (const loc of trace.locations) {\n      const file = loc.path.split('/').pop();\n      out.push(`    ${nodeId(loc.id)}[\"<b>${loc.id}</b> ${esc(loc.title)}<br/><small>${esc(file)}:${loc.lineNumber}</small>\"]`);\n    }\n    const walk = (nodes, parent) => {\n      for (const n of nodes || []) {"
+          }
+        },
+        {
+          "id": "3b",
+          "title": "One subgraph per trace",
+          "description": "Each trace becomes its own Mermaid subgraph titled '<id>. <title>', keeping traces visually grouped and laid out top-to-bottom internally.",
+          "path": "src/render/mermaid.js",
+          "lineNumber": 11,
+          "lineContent": "for (const trace of doc.traces) {",
+          "status": "ok",
+          "fileHash": "2f4681b91ccb",
+          "snippet": {
+            "startLine": 8,
+            "code": "  const byId = new Map(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, l])));\n  let labelSeq = 0;\n\n  for (const trace of doc.traces) {\n    out.push(`  subgraph T${trace.id}[\"${trace.id}. ${esc(trace.title)}\"]`);\n    out.push('    direction TB');\n    for (const loc of trace.locations) {\n      const file = loc.path.split('/').pop();\n      out.push(`    ${nodeId(loc.id)}[\"<b>${loc.id}</b> ${esc(loc.title)}<br/><small>${esc(file)}:${loc.lineNumber}</small>\"]`);\n    }\n    const walk = (nodes, parent) => {\n      for (const n of nodes || []) {\n        let me = parent;\n        if (n.ref && byId.has(n.ref)) me = nodeId(n.ref);\n        else if (n.label) {\n          me = `L${trace.id}_${labelSeq++}`;\n          out.push(`    ${me}([\"${esc(n.label)}\"])`);\n        }"
+          }
+        },
+        {
+          "id": "3c",
+          "title": "Node per location",
+          "description": "Every location in the trace becomes a Mermaid node labeled with its id, title and 'file:line', mirroring exactly what the sidebar/detail panel show for that same node.",
+          "path": "src/render/mermaid.js",
+          "lineNumber": 16,
+          "lineContent": "out.push(`    ${nodeId(loc.id)}[\"<b>${loc.id}</b> ${esc(loc.title)}<br/><small>${esc(file)}:${loc.lineNumber}</small>\"]`);",
+          "status": "ok",
+          "fileHash": "2f4681b91ccb",
+          "snippet": {
+            "startLine": 13,
+            "code": "    out.push('    direction TB');\n    for (const loc of trace.locations) {\n      const file = loc.path.split('/').pop();\n      out.push(`    ${nodeId(loc.id)}[\"<b>${loc.id}</b> ${esc(loc.title)}<br/><small>${esc(file)}:${loc.lineNumber}</small>\"]`);\n    }\n    const walk = (nodes, parent) => {\n      for (const n of nodes || []) {\n        let me = parent;\n        if (n.ref && byId.has(n.ref)) me = nodeId(n.ref);\n        else if (n.label) {\n          me = `L${trace.id}_${labelSeq++}`;\n          out.push(`    ${me}([\"${esc(n.label)}\"])`);\n        }\n        if (parent && me && me !== parent) out.push(`    ${parent} --> ${me}`);\n        walk(n.children, me);\n      }\n    };\n    walk(trace.tree, null);"
+          }
+        },
+        {
+          "id": "3d",
+          "title": "Tree walk emits edges",
+          "description": "walk() recurses over the same trace.tree structure used by the sidebar's treeHtml() [2a], emitting parent --> child edges and creating anonymous nodes for label-only group entries.",
+          "path": "src/render/mermaid.js",
+          "lineNumber": 18,
+          "lineContent": "const walk = (nodes, parent) => {",
+          "status": "ok",
+          "fileHash": "2f4681b91ccb",
+          "snippet": {
+            "startLine": 15,
+            "code": "      const file = loc.path.split('/').pop();\n      out.push(`    ${nodeId(loc.id)}[\"<b>${loc.id}</b> ${esc(loc.title)}<br/><small>${esc(file)}:${loc.lineNumber}</small>\"]`);\n    }\n    const walk = (nodes, parent) => {\n      for (const n of nodes || []) {\n        let me = parent;\n        if (n.ref && byId.has(n.ref)) me = nodeId(n.ref);\n        else if (n.label) {\n          me = `L${trace.id}_${labelSeq++}`;\n          out.push(`    ${me}([\"${esc(n.label)}\"])`);\n        }\n        if (parent && me && me !== parent) out.push(`    ${parent} --> ${me}`);\n        walk(n.children, me);\n      }\n    };\n    walk(trace.tree, null);\n    out.push('  end');\n  }"
+          }
+        },
+        {
+          "id": "3e",
+          "title": "Cross-trace links as dashed edges",
+          "description": "doc.links (relations between locations in different traces) are drawn as dashed arrows between the corresponding nodes, same data the detail panel's 'links' list [2f] renders as text.",
+          "path": "src/render/mermaid.js",
+          "lineNumber": 35,
+          "lineContent": "out.push(`  ${nodeId(link.from)} -.->${label} ${nodeId(link.to)}`);",
+          "status": "ok",
+          "fileHash": "2f4681b91ccb",
+          "snippet": {
+            "startLine": 32,
+            "code": "  }\n  for (const link of doc.links || []) {\n    const label = link.label ? `|\"${esc(link.label)}\"|` : '';\n    out.push(`  ${nodeId(link.from)} -.->${label} ${nodeId(link.to)}`);\n  }\n  if (clickable) {\n    for (const id of byId.keys()) out.push(`  click ${nodeId(id)} call waymarkSelect(\"${id}\")`);\n  }\n  return out.join('\\n');\n}\n"
+          }
+        },
+        {
+          "id": "3f",
+          "title": "Click bindings for navigation",
+          "description": "When clickable is true, every node gets a Mermaid `click <node> call waymarkSelect(\"<id>\")` directive — the only reason the HTML viewer passes clickable:true at build time [1c].",
+          "path": "src/render/mermaid.js",
+          "lineNumber": 38,
+          "lineContent": "for (const id of byId.keys()) out.push(`  click ${nodeId(id)} call waymarkSelect(\"${id}\")`);",
+          "status": "ok",
+          "fileHash": "2f4681b91ccb",
+          "snippet": {
+            "startLine": 35,
+            "code": "    out.push(`  ${nodeId(link.from)} -.->${label} ${nodeId(link.to)}`);\n  }\n  if (clickable) {\n    for (const id of byId.keys()) out.push(`  click ${nodeId(id)} call waymarkSelect(\"${id}\")`);\n  }\n  return out.join('\\n');\n}\n"
+          }
+        },
+        {
+          "id": "3g",
+          "title": "Switching to the Diagram tab",
+          "description": "showTab('diagram') toggles which <main> is visible and, only the first time, triggers the actual Mermaid render — the diagram is never drawn until the user asks for it.",
+          "path": "src/render/html.js",
+          "lineNumber": 311,
+          "lineContent": "function showTab(t) {",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 308,
+            "code": "    box.insertAdjacentHTML('afterbegin', '<p class=\"empty\">Diagram renderer unavailable (offline?). Mermaid source:</p>');\n  }\n}\nfunction showTab(t) {\n  $('#tab-map').classList.toggle('on', t === 'map'); $('#tab-diagram').classList.toggle('on', t === 'diagram');\n  $('#view-map').hidden = t !== 'map'; $('#view-diagram').hidden = t !== 'diagram';\n  if (t === 'diagram') drawDiagram();\n}\n$('#tab-map').onclick = () => showTab('map');\n$('#tab-diagram').onclick = () => showTab('diagram');\n\n// ---------- settings / copy ----------\n$('#settings-btn').onclick = () => { $('#settings').hidden = !$('#settings').hidden; };\n$('#set-root').value = prefs.root; $('#set-editor').value = prefs.editor;\nconst savePrefs = () => { prefs.root = $('#set-root').value.trim(); prefs.editor = $('#set-editor').value; localStorage.setItem(storeKey, JSON.stringify(prefs)); if (current) select(current, { push: false }); };\n$('#set-root').onchange = savePrefs; $('#set-editor').onchange = savePrefs;\n$('#copy-ctx').onclick = async () => {\n  try { await navigator.clipboard.writeText(markdown); $('#copy-ctx').textContent = 'Copied ✓'; }"
+          }
+        },
+        {
+          "id": "3h",
+          "title": "Lazy diagram render",
+          "description": "drawDiagram() dynamically imports Mermaid from a CDN, initializes it with light/dark theme matching the OS preference, and renders mmdSrc into an SVG inserted into #diagram; falls back to showing raw Mermaid source if offline.",
+          "path": "src/render/html.js",
+          "lineNumber": 297,
+          "lineContent": "async function drawDiagram() {",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 294,
+            "code": "\n// ---------- tabs / diagram ----------\nlet mermaidDone = false;\nasync function drawDiagram() {\n  if (mermaidDone) return; mermaidDone = true;\n  const box = $('#diagram');\n  box.querySelector('.mmd-src').textContent = mmdSrc;\n  try {\n    const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');\n    const dark = matchMedia('(prefers-color-scheme: dark)').matches;\n    mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: dark ? 'dark' : 'neutral', flowchart: { htmlLabels: true, curve: 'basis' } });\n    const { svg, bindFunctions } = await mermaid.render('cm-diagram', mmdSrc);\n    box.innerHTML = svg; if (bindFunctions) bindFunctions(box);\n  } catch (err) {\n    box.insertAdjacentHTML('afterbegin', '<p class=\"empty\">Diagram renderer unavailable (offline?). Mermaid source:</p>');\n  }\n}\nfunction showTab(t) {"
+          }
+        },
+        {
+          "id": "3i",
+          "title": "waymarkSelect bridges diagram → map",
+          "description": "The global function invoked by a clicked SVG node (via Mermaid's bindFunctions): it switches back to the Map tab and calls the same select(id) used everywhere else, so a diagram click lands exactly where a sidebar click would.",
+          "path": "src/render/html.js",
+          "lineNumber": 293,
+          "lineContent": "window.waymarkSelect = (id) => { showTab('map'); select(id); };",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 290,
+            "code": "  if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); if (locs[i + 1]) select(locs[i + 1].id); }\n  if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); if (i > 0) select(locs[i - 1].id); }\n});\nwindow.waymarkSelect = (id) => { showTab('map'); select(id); };\n\n// ---------- tabs / diagram ----------\nlet mermaidDone = false;\nasync function drawDiagram() {\n  if (mermaidDone) return; mermaidDone = true;\n  const box = $('#diagram');\n  box.querySelector('.mmd-src').textContent = mmdSrc;\n  try {\n    const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');\n    const dark = matchMedia('(prefers-color-scheme: dark)').matches;\n    mermaid.initialize({ startOnLoad: false, securityLevel: 'loose', theme: dark ? 'dark' : 'neutral', flowchart: { htmlLabels: true, curve: 'basis' } });\n    const { svg, bindFunctions } = await mermaid.render('cm-diagram', mmdSrc);\n    box.innerHTML = svg; if (bindFunctions) bindFunctions(box);\n  } catch (err) {"
+          }
+        }
+      ],
+      "tree": [
+        {
+          "ref": "3a",
+          "children": [
+            {
+              "ref": "3b",
+              "children": [
+                {
+                  "ref": "3c"
+                }
+              ]
+            },
+            {
+              "ref": "3d"
+            },
+            {
+              "ref": "3e"
+            },
+            {
+              "ref": "3f"
+            }
+          ]
+        },
+        {
+          "ref": "3g",
+          "children": [
+            {
+              "ref": "3h"
+            }
+          ]
+        },
+        {
+          "ref": "3i"
+        }
+      ],
+      "guide": "renderMermaid() [3a] walks the exact same doc the sidebar uses: a subgraph per trace [3b] containing one node per location [3c], edges from the trace tree [3d] (the same tree [2a] renders as nested `<ul>`s), and dashed cross-links [3e]. The HTML viewer always builds this with `clickable:true` [3f], so every node carries a `mapSelect(id)` binding.\n\nOn the client, the diagram pane stays empty until the user clicks the Diagram tab [3g], which lazily imports Mermaid from a CDN and renders the SVG [3h] — the only part of this self-contained viewer that needs network access. Clicking a node in that SVG calls `window.mapSelect` [3i], which flips back to the Map tab and calls `select(id)` [2d], landing on the identical detail view a sidebar click would produce."
+    }
+  ],
+  "links": [
+    {
+      "from": "1c",
+      "to": "3a",
+      "label": "renderMermaid(doc,{clickable:true}) precomputed at build time"
+    },
+    {
+      "from": "1f",
+      "to": "2b",
+      "label": "parsed doc drives the sidebar render"
+    },
+    {
+      "from": "1f",
+      "to": "3h",
+      "label": "parsed mmdSrc is what drawDiagram() renders"
+    },
+    {
+      "from": "3f",
+      "to": "3i",
+      "label": "Mermaid click binding invokes mapSelect(id)"
+    },
+    {
+      "from": "3i",
+      "to": "2d",
+      "label": "mapSelect calls select(id) after switching tabs"
+    },
+    {
+      "from": "2h",
+      "to": "2d",
+      "label": "ref/nav button click calls select(id)"
+    },
+    {
+      "from": "2i",
+      "to": "2d",
+      "label": "arrow/j/k keys call select(id)"
+    },
+    {
+      "from": "2k",
+      "to": "2d",
+      "label": "initial load selects hash target or first node"
+    }
+  ],
+  "meta": {
+    "createdAt": "2026-10-01T16:41:53.169Z",
+    "updatedAt": "2026-10-01T16:42:36.718Z",
+    "root": "C:\\DATOS\\codemaps-custom",
+    "commit": null,
+    "branch": null,
+    "remote": null,
+    "anchors": {
+      "ok": 27,
+      "moved": 0,
+      "fuzzy": 0,
+      "relocated": 0,
+      "unresolved": 0,
+      "missing": 0
+    },
+    "verifiedAt": "2026-10-01T17:00:52.403Z"
+  }
+}

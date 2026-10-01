@@ -1,0 +1,45 @@
+{
+  "name": "waymark",
+  "version": "0.1.0",
+  "description": "Hierarchical, line-anchored maps of how code executes — MCP server, CLI and shareable HTML viewer for agentic harnesses",
+  "main": "src/mcp.js",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "mcp": "node src/mcp.js"
+  },
+  "keywords": [
+    "mcp",
+    "waymark",
+    "code-map",
+    "agents",
+    "claude-code",
+    "codemaps",
+    "codex",
+    "code-navigation"
+  ],
+  "author": "h0w4r",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "zod": "^4.6.5"
+  },
+  "type": "module",
+  "bin": {
+    "waymark": "src/cli.js",
+    "waymark-mcp": "src/mcp.js"
+  },
+  "files": [
+    "src"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/h0w4r/waymark.git"
+  },
+  "homepage": "https://github.com/h0w4r/waymark#readme",
+  "bugs": {
+    "url": "https://github.com/h0w4r/waymark/issues"
+  }
+}

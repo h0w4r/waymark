@@ -1,0 +1,469 @@
+{
+  "schemaVersion": 1,
+  "id": "waymark-create-flow",
+  "title": "waymark_create: from tool call to shareable viewer",
+  "description": "How an agent's waymark_create call becomes a verified JSON map and a self-contained HTML viewer, and how it is later reused as context. Key takeaway: every location is re-anchored against the working tree by its exact line text, so line numbers from the LLM are hints, not truth.",
+  "query": "how does waymark_create work end to end?",
+  "traces": [
+    {
+      "title": "MCP entry and persistence",
+      "description": "The MCP tool handler resolves the repo root, delegates to the store, and notifies clients that the resource list changed.",
+      "locations": [
+        {
+          "title": "Tool registration",
+          "description": "waymark_create is registered with the flattened MapInput shape plus optional id/root, so LLMs see a flat, documented schema.",
+          "path": "src/mcp.js",
+          "lineNumber": 96,
+          "lineContent": "'waymark_create',",
+          "symbol": "waymark_create",
+          "id": "1a",
+          "status": "moved",
+          "fileHash": "4b4a77fa736e",
+          "snippet": {
+            "startLine": 93,
+            "code": "  );\n\n  server.registerTool(\n    'waymark_create',\n    {\n      title: 'Create or update a waymark',\n      description:\n        'Validates a waymark, verifies every location against the working tree (auto-correcting shifted line numbers), stores it under .waymark/ and writes a shareable HTML viewer. Pass `id` to overwrite an existing map. Returns an anchor report: fix any unresolved/missing locations and resubmit.',\n      inputSchema: {\n        ...MapInput.shape,\n        id: z.string().optional().describe('Existing waymark id to overwrite'),\n        root: rootArg,\n      },\n    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();"
+          },
+          "note": "line 90 -> 96"
+        },
+        {
+          "title": "Delegate to store",
+          "description": "The handler passes the raw map to saveMap, which validates, anchors and persists it.",
+          "path": "src/mcp.js",
+          "lineNumber": 109,
+          "lineContent": "const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });",
+          "id": "1b",
+          "status": "moved",
+          "fileHash": "4b4a77fa736e",
+          "snippet": {
+            "startLine": 106,
+            "code": "    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,\n        html: htmlPath,\n        json: jsonPath,\n        anchors: report,\n        next: report.healthy\n          ? 'All anchors verified. Share the HTML file or reference waymark://' + doc.id\n          : 'Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".',\n      });\n    }),\n  );\n"
+          },
+          "note": "line 103 -> 109"
+        },
+        {
+          "title": "Notify resource change",
+          "description": "Clients refresh the waymark:// resource list so the new map is @-mentionable right away.",
+          "path": "src/mcp.js",
+          "lineNumber": 110,
+          "lineContent": "server.sendResourceListChanged();",
+          "id": "1c",
+          "status": "moved",
+          "fileHash": "4b4a77fa736e",
+          "snippet": {
+            "startLine": 107,
+            "code": "    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,\n        html: htmlPath,\n        json: jsonPath,\n        anchors: report,\n        next: report.healthy\n          ? 'All anchors verified. Share the HTML file or reference waymark://' + doc.id\n          : 'Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".',\n      });\n    }),\n  );\n\n  server.registerTool("
+          },
+          "note": "line 104 -> 110"
+        },
+        {
+          "title": "saveMap",
+          "description": "Orchestrates normalize → anchor → write JSON → write HTML and stamps commit/branch/remote metadata.",
+          "path": "src/store.js",
+          "lineNumber": 32,
+          "lineContent": "export function saveMap(root, input, { id, html = true } = {}) {",
+          "symbol": "saveMap",
+          "id": "1d",
+          "status": "ok",
+          "fileHash": "5e4089da9400",
+          "snippet": {
+            "startLine": 29,
+            "code": "}\n\n/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),\n      branch: currentBranch(root),"
+          }
+        },
+        {
+          "title": "Normalize",
+          "description": "Zod parse, auto-assign ids (1a, 1b…), default linear tree, and reject dangling tree/link refs.",
+          "path": "src/store.js",
+          "lineNumber": 33,
+          "lineContent": "const map = normalizeMap(input);",
+          "id": "1e",
+          "status": "ok",
+          "fileHash": "5e4089da9400",
+          "snippet": {
+            "startLine": 30,
+            "code": "\n/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),\n      branch: currentBranch(root),\n      remote: remoteWebUrl(root),"
+          }
+        },
+        {
+          "title": "Anchor",
+          "description": "Every location is verified against the files on disk; see trace 2.",
+          "path": "src/store.js",
+          "lineNumber": 34,
+          "lineContent": "const report = anchorMap(root, map);",
+          "id": "1f",
+          "status": "ok",
+          "fileHash": "5e4089da9400",
+          "snippet": {
+            "startLine": 31,
+            "code": "/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),\n      branch: currentBranch(root),\n      remote: remoteWebUrl(root),\n      anchors: { ...report, issues: undefined },"
+          }
+        },
+        {
+          "title": "Write JSON",
+          "description": "The canonical artifact: .waymark/<id>.json, meant to be committed and shared.",
+          "path": "src/store.js",
+          "lineNumber": 52,
+          "lineContent": "fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));",
+          "id": "1g",
+          "status": "ok",
+          "fileHash": "5e4089da9400",
+          "snippet": {
+            "startLine": 49,
+            "code": "    },\n  };\n  fs.mkdirSync(mapDir(root), { recursive: true });\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n  const htmlPath = html ? writeHtml(root, doc) : null;\n  return { doc, report, jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc));\n  return p;\n}\n\nexport function persist(root, doc) {\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n}\n"
+          }
+        },
+        {
+          "title": "Write HTML",
+          "description": "Self-contained viewer rendered next to the JSON.",
+          "path": "src/store.js",
+          "lineNumber": 53,
+          "lineContent": "const htmlPath = html ? writeHtml(root, doc) : null;",
+          "id": "1h",
+          "status": "ok",
+          "fileHash": "5e4089da9400",
+          "snippet": {
+            "startLine": 50,
+            "code": "  };\n  fs.mkdirSync(mapDir(root), { recursive: true });\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n  const htmlPath = html ? writeHtml(root, doc) : null;\n  return { doc, report, jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc));\n  return p;\n}\n\nexport function persist(root, doc) {\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n}\n\nexport function loadMap(root, id, { quiet = false } = {}) {"
+          }
+        }
+      ],
+      "tree": [
+        {
+          "ref": "1a",
+          "children": [
+            {
+              "ref": "1b",
+              "children": [
+                {
+                  "ref": "1d",
+                  "children": [
+                    {
+                      "ref": "1e"
+                    },
+                    {
+                      "ref": "1f"
+                    },
+                    {
+                      "ref": "1g"
+                    },
+                    {
+                      "ref": "1h"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "ref": "1c"
+            }
+          ]
+        }
+      ],
+      "guide": "The tool [1a] is a thin adapter: it resolves the root and calls the store [1b]. **saveWaymark map** [1d] is the only writer: it normalizes [1e], anchors [1f], writes the JSON [1g] and the HTML [1h]. Finally [1c] tells MCP clients the resource list changed, which is what makes `@waymark:waymark://<id>` work immediately in Claude Code.",
+      "id": "1"
+    },
+    {
+      "title": "Anchoring locations to real code",
+      "description": "Each location carries the exact text of its line; the anchorer finds it again even when lines shift or files move.",
+      "locations": [
+        {
+          "title": "anchorMap",
+          "description": "Iterates all locations with a shared FileCache and accumulates a health report (ok/moved/fuzzy/relocated/unresolved/missing).",
+          "path": "src/anchor.js",
+          "lineNumber": 155,
+          "lineContent": "export function anchorMap(root, map) {",
+          "symbol": "anchorMap",
+          "id": "2a",
+          "status": "ok",
+          "fileHash": "2a22985e0606",
+          "snippet": {
+            "startLine": 152,
+            "code": "}\n\n/** Anchors every location of a normalized map in place; returns a summary report. */\nexport function anchorMap(root, map) {\n  const cache = new FileCache(root);\n  const report = { ok: 0, moved: 0, fuzzy: 0, relocated: 0, unresolved: 0, missing: 0, issues: [] };\n  for (const trace of map.traces) {\n    trace.locations = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      report[r.status]++;\n      if (r.status !== 'ok') report.issues.push({ id: r.id, status: r.status, path: r.path, note: r.note });\n      return r;\n    });\n  }\n  report.total = map.traces.reduce((n, t) => n + t.locations.length, 0);\n  report.healthy = report.unresolved === 0 && report.missing === 0;\n  return report;\n}"
+          }
+        },
+        {
+          "title": "anchorLocation",
+          "description": "Resolves one location and attaches a code snippet and file hash used later for drift detection.",
+          "path": "src/anchor.js",
+          "lineNumber": 80,
+          "lineContent": "export function anchorLocation(cache, loc) {",
+          "symbol": "anchorLocation",
+          "id": "2b",
+          "status": "ok",
+          "fileHash": "2a22985e0606",
+          "snippet": {
+            "startLine": 77,
+            "code": " * status: ok | moved (same text, other line) | fuzzy (partial match) | relocated (file moved)\n *         | unresolved (text not found) | missing (file not found)\n */\nexport function anchorLocation(cache, loc) {\n  let relPath = loc.path;\n  let file = cache.read(relPath);\n  let relocatedFrom = null;\n  if (!file) {\n    const alt = cache.findByBasename(relPath);\n    if (alt && (file = cache.read(alt))) {\n      relocatedFrom = relPath;\n      relPath = alt;\n    }\n  }\n  if (!file) {\n    return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };\n  }\n"
+          }
+        },
+        {
+          "title": "Renamed file fallback",
+          "description": "If the path is gone, look up a tracked file with the same basename / longest path suffix.",
+          "path": "src/anchor.js",
+          "lineNumber": 85,
+          "lineContent": "const alt = cache.findByBasename(relPath);",
+          "id": "2c",
+          "status": "ok",
+          "fileHash": "2a22985e0606",
+          "snippet": {
+            "startLine": 82,
+            "code": "  let file = cache.read(relPath);\n  let relocatedFrom = null;\n  if (!file) {\n    const alt = cache.findByBasename(relPath);\n    if (alt && (file = cache.read(alt))) {\n      relocatedFrom = relPath;\n      relPath = alt;\n    }\n  }\n  if (!file) {\n    return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };\n  }\n\n  const { lines } = file;\n  const wanted = norm(loc.lineContent);\n  const idx0 = Math.min(Math.max(loc.lineNumber - 1, 0), lines.length - 1);\n  let idx = -1;\n  let status = 'unresolved';"
+          }
+        },
+        {
+          "title": "Exact line match",
+          "description": "Fast path: the claimed line holds the claimed text (whitespace-normalized).",
+          "path": "src/anchor.js",
+          "lineNumber": 101,
+          "lineContent": "if (!wanted || norm(lines[idx0]) === wanted) {",
+          "id": "2d",
+          "status": "ok",
+          "fileHash": "2a22985e0606",
+          "snippet": {
+            "startLine": 98,
+            "code": "  let idx = -1;\n  let status = 'unresolved';\n\n  if (!wanted || norm(lines[idx0]) === wanted) {\n    idx = idx0;\n    status = 'ok';\n  } else {\n    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));\n    if (exact.length) {\n      idx = nearest(exact, idx0);\n      status = 'moved';\n    } else {\n      const partial = [];\n      if (wanted.length >= 6) {\n        lines.forEach((l, i) => {\n          const n = norm(l);\n          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);"
+          }
+        },
+        {
+          "title": "Moved line",
+          "description": "Same text elsewhere in the file: pick the occurrence nearest to the claimed line.",
+          "path": "src/anchor.js",
+          "lineNumber": 107,
+          "lineContent": "if (exact.length) {",
+          "id": "2e",
+          "status": "ok",
+          "fileHash": "2a22985e0606",
+          "snippet": {
+            "startLine": 104,
+            "code": "  } else {\n    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));\n    if (exact.length) {\n      idx = nearest(exact, idx0);\n      status = 'moved';\n    } else {\n      const partial = [];\n      if (wanted.length >= 6) {\n        lines.forEach((l, i) => {\n          const n = norm(l);\n          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);\n        });\n      }\n      if (!partial.length && loc.symbol) {\n        const re = new RegExp(`\\\\b${loc.symbol.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\\b`);\n        lines.forEach((l, i) => re.test(l) && partial.push(i));\n      }"
+          }
+        },
+        {
+          "title": "Fuzzy fallback",
+          "description": "Partial text or symbol match; flagged so the agent double-checks it.",
+          "path": "src/anchor.js",
+          "lineNumber": 124,
+          "lineContent": "status = 'fuzzy';",
+          "id": "2f",
+          "status": "ok",
+          "fileHash": "2a22985e0606",
+          "snippet": {
+            "startLine": 121,
+            "code": "      }\n      if (partial.length) {\n        idx = nearest(partial, idx0);\n        status = 'fuzzy';\n      }\n    }\n  }\n  if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';\n\n  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);\n  const result = {\n    ...loc,\n    path: relPath,\n    lineNumber: anchorIdx + 1,\n    status,\n    fileHash: file.hash,"
+          }
+        },
+        {
+          "title": "safeJoin guard",
+          "description": "Paths are resolved inside the repo root only, so a map cannot read files outside it.",
+          "path": "src/anchor.js",
+          "lineNumber": 13,
+          "lineContent": "export function safeJoin(root, rel) {",
+          "symbol": "safeJoin",
+          "id": "2g",
+          "status": "ok",
+          "fileHash": "2a22985e0606",
+          "snippet": {
+            "startLine": 10,
+            "code": "const norm = (s) => (s || '').trim().replace(/\\s+/g, ' ');\n\n/** Resolves a repo-relative path, refusing anything that escapes the root. */\nexport function safeJoin(root, rel) {\n  const abs = path.resolve(root, rel);\n  const relBack = path.relative(root, abs);\n  if (relBack.startsWith('..') || path.isAbsolute(relBack)) {\n    throw new Error(`Path \"${rel}\" is outside the repository root`);\n  }\n  return abs;\n}\n\nexport class FileCache {\n  constructor(root) {\n    this.root = root;\n    this.files = new Map();\n    this._tracked = undefined;\n  }"
+          }
+        }
+      ],
+      "tree": [
+        {
+          "ref": "2a",
+          "children": [
+            {
+              "ref": "2b",
+              "children": [
+                {
+                  "label": "file resolution",
+                  "children": [
+                    {
+                      "ref": "2g"
+                    },
+                    {
+                      "ref": "2c"
+                    }
+                  ]
+                },
+                {
+                  "label": "line resolution (in order)",
+                  "children": [
+                    {
+                      "ref": "2d"
+                    },
+                    {
+                      "ref": "2e"
+                    },
+                    {
+                      "ref": "2f"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "guide": "[2a] drives [2b] for every node. File resolution goes through [2g] (root jail) and falls back to [2c] on renames. Line resolution tries the exact line [2d], then the same text elsewhere [2e], then a partial/symbol match [2f]. Anything else is reported as `unresolved`, and the agent is told to fix it and resubmit with the same id.",
+      "id": "2"
+    },
+    {
+      "title": "Reuse: viewer, context and drift",
+      "description": "The stored map is consumed by humans (HTML), by agents (markdown resource) and by CI (verify).",
+      "locations": [
+        {
+          "title": "renderHtml",
+          "description": "Inlines the map, a clickable Mermaid diagram and a compact markdown copy into one HTML file.",
+          "path": "src/render/html.js",
+          "lineNumber": 12,
+          "lineContent": "export function renderHtml(doc) {",
+          "symbol": "renderHtml",
+          "id": "3a",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 9,
+            "code": "  JSON.stringify(v).replace(/</g, '\\\\u003c').replace(/[\\u2028\\u2029]/g, ' ');\n\n/** Self-contained, shareable viewer. Only the Mermaid diagram tab needs network (CDN). */\nexport function renderHtml(doc) {\n  const data = {\n    doc,\n    mermaid: renderMermaid(doc, { clickable: true }),\n    markdown: renderMarkdown(doc, { detail: 'compact' }),\n  };\n  return `<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Waymark · ${escHtml(doc.title)}</title>\n<style>${CSS}</style>\n</head>\n<body>"
+          }
+        },
+        {
+          "title": "Node selection",
+          "description": "Clicking a node shows its description, highlighted snippet, editor/remote links and the trace guide.",
+          "path": "src/render/html.js",
+          "lineNumber": 255,
+          "lineContent": "function select(id, { push = true } = {}) {",
+          "symbol": "select",
+          "id": "3b",
+          "status": "ok",
+          "fileHash": "32f41e4a74de",
+          "snippet": {
+            "startLine": 252,
+            "code": "\n// ---------- detail ----------\nlet current = null;\nfunction select(id, { push = true } = {}) {\n  const l = byId.get(id); if (!l) return;\n  current = id;\n  document.querySelectorAll('.node.sel').forEach((n) => n.classList.remove('sel'));\n  const node = document.querySelector('.node[data-id=\"' + id + '\"]');\n  if (node) { node.classList.add('sel'); node.closest('.trace').classList.remove('closed'); node.scrollIntoView({ block: 'nearest' }); }\n  const ext = (l.path.split('.').pop() || '').toLowerCase();\n  const code = l.snippet && l.snippet.code != null\n    ? '<pre class=\"code\">' + l.snippet.code.split('\\\\n').map((ln, i) => {\n        const no = l.snippet.startLine + i;\n        return '<span class=\"ln' + (no === l.lineNumber ? ' hl' : '') + '\"><span class=\"no\">' + no + '</span>' + hl(ln, ext) + '</span>';\n      }).join('') + '</pre>'\n    : '<pre class=\"code\"><span class=\"ln hl\"><span class=\"no\">' + l.lineNumber + '</span>' + esc(l.lineContent) + '</span></pre>';\n  const ed = editorUrl(l), rm = remoteUrl(l);\n  const idx = locs.findIndex((x) => x.id === id);"
+          }
+        },
+        {
+          "title": "waymark:// resource",
+          "description": "Template resource listing every map; reading it returns markdown context for @-mentions.",
+          "path": "src/mcp.js",
+          "lineNumber": 202,
+          "lineContent": "server.registerResource(",
+          "id": "3c",
+          "status": "moved",
+          "fileHash": "4b4a77fa736e",
+          "snippet": {
+            "startLine": 199,
+            "code": "  );\n\n  // @-mentionable context: waymark://<id>\n  server.registerResource(\n    'waymark',\n    new ResourceTemplate('waymark://{id}', {\n      list: async () => ({\n        resources: listMaps(rootOf()).map((m) => ({\n          uri: `waymark://${m.id}`,\n          name: m.title,\n          description: m.description,\n          mimeType: 'text/markdown',\n        })),\n      }),\n      complete: { id: (v) => listMaps(rootOf()).map((m) => m.id).filter((i) => i.startsWith(v)) },\n    }),\n    { title: 'Waymark', description: 'A waymark rendered as markdown context', mimeType: 'text/markdown' },\n    async (uri, { id }) => ({"
+          },
+          "note": "line 196 -> 202"
+        },
+        {
+          "title": "renderMarkdown",
+          "description": "Agent-oriented rendering: text call tree, anchors and numbered snippets.",
+          "path": "src/render/markdown.js",
+          "lineNumber": 28,
+          "lineContent": "export function renderMarkdown(doc, { detail = 'full', diagram = false } = {}) {",
+          "symbol": "renderMarkdown",
+          "id": "3d",
+          "status": "ok",
+          "fileHash": "a5bd22698abe",
+          "snippet": {
+            "startLine": 25,
+            "code": " * Context-oriented rendering for agents (what an @-mention injects).\n * detail: \"full\" includes snippets; \"compact\" keeps only structure + anchors.\n */\nexport function renderMarkdown(doc, { detail = 'full', diagram = false } = {}) {\n  const o = [];\n  o.push(`# Waymark: ${doc.title}`);\n  o.push('');\n  o.push(doc.description);\n  const m = doc.meta || {};\n  o.push('');\n  o.push(\n    `_id: \\`${doc.id}\\`${m.commit ? ` · commit ${m.commit.slice(0, 8)}` : ''}${m.branch ? ` (${m.branch})` : ''}` +\n      `${m.updatedAt ? ` · updated ${m.updatedAt.slice(0, 10)}` : ''}${doc.query ? ` · query: \"${doc.query}\"` : ''}_`,\n  );\n\n  for (const trace of doc.traces) {\n    o.push('', `## Trace ${trace.id}: ${trace.title}`, '', trace.description, '', '```text', renderTextTree(trace), '```', '');\n    for (const loc of trace.locations) {"
+          }
+        },
+        {
+          "title": "verifyMap",
+          "description": "Re-anchors a stored map against HEAD, reports moved/broken anchors and changed files, optionally fixing them.",
+          "path": "src/verify.js",
+          "lineNumber": 9,
+          "lineContent": "export function verifyMap(root, id, { fix = false } = {}) {",
+          "symbol": "verifyMap",
+          "id": "3e",
+          "status": "ok",
+          "fileHash": "214d66bfa2c2",
+          "snippet": {
+            "startLine": 6,
+            "code": " * Re-checks every anchor of a stored waymark against the current working tree.\n * With fix=true, corrected line numbers/snippets are written back.\n */\nexport function verifyMap(root, id, { fix = false } = {}) {\n  const doc = loadMap(root, id);\n  const cache = new FileCache(root);\n  const changes = [];\n  const changedFiles = new Set();\n  const counts = { ok: 0, moved: 0, fuzzy: 0, relocated: 0, unresolved: 0, missing: 0 };\n\n  for (const trace of doc.traces) {\n    trace.locations = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      counts[r.status]++;\n      if (loc.fileHash && r.fileHash && loc.fileHash !== r.fileHash) changedFiles.add(r.path);\n      if (r.status !== 'ok' || r.lineNumber !== loc.lineNumber || r.path !== loc.path) {\n        changes.push({\n          id: loc.id,"
+          }
+        }
+      ],
+      "tree": [
+        {
+          "label": "humans",
+          "children": [
+            {
+              "ref": "3a",
+              "children": [
+                {
+                  "ref": "3b"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "agents",
+          "children": [
+            {
+              "ref": "3c",
+              "children": [
+                {
+                  "ref": "3d"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "CI / maintenance",
+          "children": [
+            {
+              "ref": "3e"
+            }
+          ]
+        }
+      ],
+      "guide": "Humans open the HTML [3a] and navigate with [3b]. Agents load the map through the resource [3c], rendered by [3d]. `waymark verify --strict` runs [3e] in CI so maps don't silently rot.",
+      "id": "3"
+    }
+  ],
+  "links": [
+    {
+      "from": "1f",
+      "to": "2a",
+      "label": "anchorWaymark map(root, map)"
+    },
+    {
+      "from": "1h",
+      "to": "3a",
+      "label": "renderHtml(doc)"
+    },
+    {
+      "from": "3e",
+      "to": "2b",
+      "label": "re-anchor each location"
+    }
+  ],
+  "tags": [
+    "meta",
+    "architecture"
+  ],
+  "meta": {
+    "createdAt": "2026-10-01T16:36:38.822Z",
+    "updatedAt": "2026-10-01T16:36:38.822Z",
+    "root": "C:\\DATOS\\codemaps-custom",
+    "commit": null,
+    "branch": null,
+    "remote": null,
+    "anchors": {
+      "ok": 16,
+      "moved": 4,
+      "fuzzy": 0,
+      "relocated": 0,
+      "unresolved": 0,
+      "missing": 0
+    },
+    "verifiedAt": "2026-10-01T17:00:52.582Z"
+  }
+}
