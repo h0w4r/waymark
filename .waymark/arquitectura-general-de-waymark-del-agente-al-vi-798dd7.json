@@ -20,16 +20,17 @@
           "description": "El subcomando `mcp` de la CLI levanta el servidor stdio.",
           "explanation": "Claude Code o Codex ejecutan `waymark mcp` según `.mcp.json`. La importación es perezosa para que el resto de comandos no carguen el SDK de MCP. Desde aquí todas las tools quedan disponibles para el agente.",
           "path": "src/cli.js",
-          "lineNumber": 295,
+          "lineNumber": 297,
           "lineContent": "const { startStdio } = await import('./mcp.js');",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "b05f48fbab4b",
           "snippet": {
-            "startLine": 292,
+            "startLine": 294,
             "code": "  if (!cmd || opt.help) return out(HELP);\n  switch (cmd) {\n    case 'mcp': {\n      const { startStdio } = await import('./mcp.js');\n      return startStdio();\n    }\n    case 'generate':\n      return generate(rest.join(' '));\n    case 'enrich':\n      return enrich(rest[0]);\n    case 'refresh':\n      return refresh(rest[0]);\n    case 'lint': {\n      const r = root();\n      const ids = rest[0] ? [loadMap(r, rest[0]).id] : listMaps(r).map((m) => m.id);\n      const mapIds = new Set(listMaps(r).map((m) => m.id));\n      const results = ids.map((i) => lintMap(loadMap(r, i), { mapIds }));\n      if (opt.json) return out(results);"
           },
-          "narrativeHash": "b05f48fbab4b"
+          "narrativeHash": "b05f48fbab4b",
+          "note": "line 295 -> 297"
         },
         {
           "id": "1b",
@@ -258,17 +259,18 @@
           "description": "Verifica un mapa o todos y decide el código de salida.",
           "explanation": "Entrada para humanos y CI. Con `--fix` guarda las anclas corregidas; sin él solo informa. El código de salida permite romper el build si hay anclas rotas.",
           "path": "src/cli.js",
-          "lineNumber": 422,
+          "lineNumber": 424,
           "lineContent": "case 'verify': {",
           "mapRef": "verificacion-de-deriva-y-reanclaje-de-waymark-8c8a2e#1a",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "ffbb861e6b68",
           "snippet": {
-            "startLine": 419,
+            "startLine": 421,
             "code": "      const f = opt.format || 'markdown';\n      return out(f === 'json' ? doc : f === 'mermaid' ? renderMermaid(doc) : renderMarkdown(doc, { detail: f === 'compact' ? 'compact' : 'full' }));\n    }\n    case 'verify': {\n      const r = root();\n      const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);\n      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.narrative.stale) {\n          const parts = [];\n          if (v.narrative.nodes.length) parts.push('nodes ' + v.narrative.nodes.map((n) => `[${n}]`).join(', '));\n          if (v.narrative.traces.length) parts.push('trace guides ' + v.narrative.traces.join(', '));\n          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);"
           },
-          "narrativeHash": "ffbb861e6b68"
+          "narrativeHash": "ffbb861e6b68",
+          "note": "line 422 -> 424"
         },
         {
           "id": "3b",
@@ -294,17 +296,18 @@
           "description": "Cruza un git diff con los nodos y renderiza el reporte.",
           "explanation": "Llama a `diffMaps` y devuelve markdown o JSON. `--fail-on` permite que CI falle si se tocan nodos, se rompen anclas o hay deriva.",
           "path": "src/cli.js",
-          "lineNumber": 349,
+          "lineNumber": 351,
           "lineContent": "const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });",
           "mapRef": "fact-check-diff-de-impacto-para-prs-y-verificaci-8746b6#3a",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "7c7e0f122c92",
           "snippet": {
-            "startLine": 346,
+            "startLine": 348,
             "code": "      return;\n    }\n    case 'diff': {\n      const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });\n      out(opt.format === 'json' ? rep : renderDiff(rep));\n      const f = opt['fail-on'];\n      if (\n        (f === 'touched' && rep.maps.some((m) => m.touched.length)) ||\n        (f === 'broken' && rep.maps.some((m) => m.broken.length)) ||\n        (f === 'drift' && rep.maps.some((m) => m.drift.stale || m.broken.length))\n      ) process.exitCode = 1;\n      return;\n    }\n    case 'exec': {\n      const r = root();\n      const sep = process.argv.indexOf('--');\n      let coverage;\n      let source;"
           },
-          "narrativeHash": "7c7e0f122c92"
+          "narrativeHash": "7c7e0f122c92",
+          "note": "line 349 -> 351"
         },
         {
           "id": "3d",
@@ -380,17 +383,17 @@
     "createdAt": "2026-10-20T03:59:40.706Z",
     "updatedAt": "2026-10-20T04:00:59.279Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "9fce4e38f8797d3e72d7948c3f5e3646a2783d12",
+    "commit": "f58dc268a5a5544f486dfcff408d078b85a880aa",
     "branch": "main",
     "remote": "https://github.com/h0w4r/waymark",
     "anchors": {
-      "ok": 13,
-      "moved": 0,
+      "ok": 10,
+      "moved": 3,
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-20T04:02:57.560Z"
+    "verifiedAt": "2026-10-20T05:19:25.952Z"
   }
 }

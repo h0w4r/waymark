@@ -8854,6 +8854,7 @@ function codexGlobal(serverCmd, written) {
   }
   const dir = path10.join(os2.homedir(), ".agents", "skills", "waymark");
   writeManaged(path10.join(dir, "SKILL.md"), SKILL(), written);
+  installPlaybookSkill(path10.join(os2.homedir(), ".agents", "skills"), written);
   writeManaged(path10.join(dir, "agents", "openai.yaml"), `# ${MARK}
 ${CODEX_SKILL_YAML}`, written);
 }
@@ -8950,10 +8951,25 @@ function installVscode(written) {
   const inst = spawnSync2(code.command, argsFor(code, ["--install-extension", vsix, "--force"]), { encoding: "utf8", shell: !!code.shell });
   written.push(inst.status === 0 ? `vscode: installed ${path10.basename(vsix)} (reload VS Code windows)` : `vscode: install failed: ${inst.stderr || inst.stdout}`);
 }
+function installPlaybookSkill(skillsDir, written, { cli = path10.join(HERE2, "cli.js"), version: version2 = null } = {}) {
+  if (!fs9.existsSync(PLAYBOOK_SRC)) return;
+  const dest = path10.join(skillsDir, "using-waymark");
+  const destSkill = path10.join(dest, "SKILL.md");
+  if (fs9.existsSync(destSkill) && !fs9.readFileSync(destSkill, "utf8").includes("waymark:managed")) {
+    written.push(`skipped (user-owned): ${dest}`);
+    return;
+  }
+  fs9.rmSync(dest, { recursive: true, force: true });
+  fs9.cpSync(PLAYBOOK_SRC, dest, { recursive: true });
+  const v = version2 || JSON.parse(fs9.readFileSync(path10.join(HERE2, "..", "package.json"), "utf8")).version;
+  if (cli) fs9.writeFileSync(path10.join(dest, "scripts", "wm.config.json"), JSON.stringify({ cli: cli.replace(/\\/g, "/"), version: v }, null, 2) + "\n");
+  written.push(`wrote: ${dest}`);
+}
 function claudeGlobal(serverCmd, written, { hooks = true, useGlobalBin = false } = {}) {
   const home = process.env.CLAUDE_CONFIG_DIR || path10.join(os2.homedir(), ".claude");
   if (hooks) installClaudeHooks(path10.join(home, "settings.json"), written, { useGlobalBin });
   writeManaged(path10.join(home, "skills", "waymark", "SKILL.md"), SKILL({ claude: true }), written);
+  installPlaybookSkill(path10.join(home, "skills"), written);
   writeManaged(path10.join(home, "agents", "waymark.md"), CLAUDE_AGENT(), written);
   removeManaged(path10.join(home, "commands", "waymark.md"), written);
   const claude = resolveCommand("claude");
@@ -8998,7 +9014,8 @@ function install({
   claudeGlobal: claudeGlob = false,
   useGlobalBin = false,
   vscode = false,
-  prAction = false
+  prAction = false,
+  skillDir = null
 }) {
   const written = [];
   const serverCmd = useGlobalBin ? { command: "waymark-mcp", args: [] } : { command: "node", args: [MCP_ENTRY] };
@@ -9012,6 +9029,7 @@ function install({
     writeManaged(path10.join(target, ".claude", "agents", "waymark.md"), CLAUDE_AGENT(), written);
     removeManaged(path10.join(target, ".claude", "commands", "waymark.md"), written);
     writeManaged(path10.join(target, ".claude", "skills", "waymark", "SKILL.md"), SKILL({ claude: true }), written);
+    installPlaybookSkill(path10.join(target, ".claude", "skills"), written);
     if (hooks) installClaudeHooks(path10.join(target, ".claude", "settings.json"), written, { remove: claudeGlob, useGlobalBin });
   }
   if (codex) {
@@ -9021,15 +9039,17 @@ function install({
       written
     );
     writeManaged(path10.join(target, ".codex", "agents", "waymark.toml"), CODEX_AGENT(serverCmd), written);
-    const skillDir = path10.join(target, ".agents", "skills", "waymark");
-    writeManaged(path10.join(skillDir, "SKILL.md"), SKILL(), written);
-    writeManaged(path10.join(skillDir, "agents", "openai.yaml"), `# ${MARK}
+    const skillDir2 = path10.join(target, ".agents", "skills", "waymark");
+    writeManaged(path10.join(skillDir2, "SKILL.md"), SKILL(), written);
+    installPlaybookSkill(path10.join(target, ".agents", "skills"), written);
+    writeManaged(path10.join(skillDir2, "agents", "openai.yaml"), `# ${MARK}
 ${CODEX_SKILL_YAML}`, written);
   }
   if (codexGlob) codexGlobal(serverCmd, written);
   if (claudeGlob) claudeGlobal(serverCmd, written, { hooks, useGlobalBin });
   if (vscode) installVscode(written);
   if (prAction) installPrAction(target, written);
+  if (skillDir) installPlaybookSkill(path10.resolve(skillDir), written);
   if (agentsMd) {
     const p = path10.join(target, "AGENTS.md");
     const cur = fs9.existsSync(p) ? fs9.readFileSync(p, "utf8") : "";
@@ -9039,7 +9059,7 @@ ${CODEX_SKILL_YAML}`, written);
   }
   return written.join("\n");
 }
-var HERE2, MCP_ENTRY, MARK, TOML_MARK, TOOLS, AGENT_DESCRIPTION, AGENT_RETURN, CLAUDE_AGENT, SKILL, CODEX_SKILL_YAML, tomlStr, tomlArr, CODEX_AGENT, CLI_ENTRY, HOOKS, isOurHook, AGENTS_SNIPPET;
+var HERE2, MCP_ENTRY, MARK, TOML_MARK, TOOLS, AGENT_DESCRIPTION, AGENT_RETURN, CLAUDE_AGENT, SKILL, CODEX_SKILL_YAML, tomlStr, tomlArr, CODEX_AGENT, CLI_ENTRY, HOOKS, isOurHook, PLAYBOOK_SRC, AGENTS_SNIPPET;
 var init_install = __esm({
   "src/install.js"() {
     init_guide();
@@ -9083,7 +9103,7 @@ ${AGENT_RETURN}
 `;
     SKILL = ({ claude = false } = {}) => `---
 name: waymark
-description: Waymark \u2014 create, read, verify and share narrated, line-anchored maps of how code executes (traces of numbered locations 1a, 1b\u2026 with an annotated tree, a storytelling guide, per-node explanations and an interactive viewer). Use when the user asks how a flow works end-to-end, asks for a code map/diagram/walkthrough of a feature, mentions waymark or waymark://<id>, or before changing code an existing map covers.
+description: Waymark commands the user runs directly (/waymark <topic> | list | show | check | refresh | diff | exec | note | overview | enrich | verify | lint) to create, read, fact-check and maintain narrated, line-anchored maps of how code executes. Use when the user invokes /waymark or $waymark, asks to create/show/check a code map, or mentions waymark://<id>. For using maps while doing other work (editing, debugging, reviewing), see the using-waymark skill.
 ${claude ? 'argument-hint: "<topic> [--fast] | list | show <id> | enrich <id> | refresh <id> | lint | verify [id] | from-chat"\n' : ""}---
 ${MARK}
 # Waymark
@@ -9160,6 +9180,7 @@ ${codexServerToml(serverCmd, { enabledTools: TOOLS })}
       { event: "PostToolUse", matcher: "Read", kind: "post-read" }
     ];
     isOurHook = (h) => typeof h?.command === "string" && /(waymark|cli\.js"?)\s+hook (pre-edit|post-edit|post-read)\s*$/.test(h.command);
+    PLAYBOOK_SRC = path10.join(HERE2, "..", "skills", "using-waymark");
     AGENTS_SNIPPET = `
 ## Waymark
 ${MARK}
@@ -27520,6 +27541,7 @@ Usage: waymark <command> [options]
                          [--global-bin]    use the waymark-mcp bin instead of an absolute path
                          [--vscode]        package and install the VS Code extension (vscode/)
                          [--pr-action]     add .github/workflows/waymark-pr.yml (PR comment with affected flows)
+                         [--skill-dir <dir>] copy the portable using-waymark skill into any harness skills dir
   mcp                    Run the MCP server on stdio
 
 Global: --root <dir>  repository root (default: git toplevel of cwd)
@@ -27560,6 +27582,7 @@ var { values: opt, positionals } = parseArgs({
     "global-bin": { type: "boolean" },
     vscode: { type: "boolean" },
     "pr-action": { type: "boolean" },
+    "skill-dir": { type: "string" },
     "no-pull": { type: "boolean" },
     help: { type: "boolean", short: "h" }
   }
@@ -27910,6 +27933,7 @@ async function main() {
           claudeGlobal: !!(opt["claude-global"] || opt.global),
           vscode: !!opt.vscode,
           prAction: !!opt["pr-action"],
+          skillDir: opt["skill-dir"] || null,
           agentsMd: !opt["no-agents-md"],
           hooks: !opt["no-hooks"],
           useGlobalBin: !!opt["global-bin"]

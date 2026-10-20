@@ -193,6 +193,22 @@ Los tres comparten `~/.codex/config.toml` y además leen `.codex/config.toml` de
 - **Claude Agent SDK**: `mcpServers: { waymark: { command: "node", args: [".../src/mcp.js"] } }` y el prompt MCP `create_waymark` o la tool `waymark_start`.
 - **Sin MCP**: `waymark guide "<tema>"` imprime el procedimiento; el agente escribe el JSON y ejecuta `waymark create map.json` (exit 2 si hay anclas sin verificar).
 
+### Skill portable `using-waymark` (cualquier agente, cualquier harness)
+
+[`skills/using-waymark`](skills/using-waymark/SKILL.md) es el *playbook* que un agente sigue **por iniciativa propia** mientras trabaja: antes de editar un archivo cubierto por un mapa, al depurar, al revisar un PR, al refactorizar, al terminar un cambio (verificar/refrescar), al hacer onboarding o un hand-off. La skill `waymark` sigue siendo la de los comandos que pide el usuario (`/waymark <tema>`, `list`, `check`…).
+
+- `SKILL.md`: tabla situación → acción, cómo interpretar las señales de confianza (anclas, drift, fact-check, ejecución) y las reglas.
+- `references/`: playbooks paso a paso (`workflows.md`), todas las tools MCP con su gemelo CLI (`tools.md`), el formato del mapa (`map-format.md`) y cómo conectarla en cada harness (`harnesses.md`).
+- `scripts/wm.mjs`: wrapper del CLI para harnesses **sin MCP** (`node <skill>/scripts/wm.mjs for-file src/app.ts 42`). Resuelve el CLI en este orden: `WAYMARK_CLI`, `wm.config.json` (lo escribe el instalador), el bundle del plugin, el clon del repo, `waymark` en el PATH y por último `npx github:h0w4r/waymark`. `wm.mjs where` muestra cuál usó.
+
+Se instala sola con `--claude-global` (`~/.claude/skills/using-waymark`), `--codex-global` (`~/.agents/skills/using-waymark`), la instalación por proyecto (`.claude/skills`, `.agents/skills`) y el plugin. Para cualquier otro harness que lea skills de una carpeta:
+
+```bash
+node src/cli.js install --no-claude --no-codex --no-agents-md --skill-dir <carpeta-de-skills-del-harness>
+```
+
+Si el harness no soporta skills, pega `SKILL.md` en su archivo de reglas (AGENTS.md, `.cursor/rules`, etc.) y deja el resto de la carpeta accesible.
+
 ## Uso
 
 | | Claude Code | Codex (CLI / IDE / desktop) |

@@ -35,6 +35,13 @@ fs.mkdirSync(path.join(plugin, 'agents'), { recursive: true });
 fs.mkdirSync(path.join(plugin, '.claude-plugin'), { recursive: true });
 fs.writeFileSync(path.join(plugin, 'skills', 'waymark', 'SKILL.md'), strip(t.skill));
 fs.writeFileSync(path.join(plugin, 'agents', 'waymark.md'), strip(t.agent));
+// Portable playbook skill: its scripts/wm.mjs finds ../../../dist/waymark.mjs inside the plugin.
+const playbook = path.join(plugin, 'skills', 'using-waymark');
+fs.rmSync(playbook, { recursive: true, force: true });
+fs.cpSync(path.join(root, 'skills', 'using-waymark'), playbook, {
+  recursive: true,
+  filter: (src) => path.basename(src) !== 'wm.config.json',
+});
 
 const hook = (kind) => ({ type: 'command', command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/dist/waymark.mjs', 'hook', kind], timeout: 20 });
 const manifest = {

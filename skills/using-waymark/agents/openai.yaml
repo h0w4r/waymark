@@ -1,0 +1,12 @@
+interface:
+  display_name: "Using Waymark"
+  short_description: "Use Waymark code maps inside any coding workflow"
+  brand_color: "#3A5CCC"
+  default_prompt: "Before changing this code, use Waymark to understand the flow it belongs to."
+policy:
+  allow_implicit_invocation: true
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "waymark"
+      description: "Waymark MCP server (optional: scripts/wm.mjs works without it)"

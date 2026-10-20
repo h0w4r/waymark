@@ -4,7 +4,7 @@
   "description": "Hierarchical, line-anchored maps of how code executes — MCP server, CLI and shareable HTML viewer for agentic harnesses",
   "main": "src/mcp.js",
   "scripts": {
-    "test": "node --test test/waymark.test.js test/narrative.test.js test/agentic.test.js test/vscode.test.js test/features.test.js",
+    "test": "node --test test/waymark.test.js test/narrative.test.js test/agentic.test.js test/vscode.test.js test/features.test.js test/skill.test.js",
     "mcp": "node src/mcp.js",
     "vscode:package": "npm run build && cd vscode && npx --yes @vscode/vsce@latest package --no-dependencies",
     "vscode:install": "node src/cli.js install --no-claude --no-codex --no-agents-md --vscode",

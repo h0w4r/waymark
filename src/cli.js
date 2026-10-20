@@ -70,6 +70,7 @@ Usage: waymark <command> [options]
                          [--global-bin]    use the waymark-mcp bin instead of an absolute path
                          [--vscode]        package and install the VS Code extension (vscode/)
                          [--pr-action]     add .github/workflows/waymark-pr.yml (PR comment with affected flows)
+                         [--skill-dir <dir>] copy the portable using-waymark skill into any harness skills dir
   mcp                    Run the MCP server on stdio
 
 Global: --root <dir>  repository root (default: git toplevel of cwd)
@@ -111,6 +112,7 @@ const { values: opt, positionals } = parseArgs({
     'global-bin': { type: 'boolean' },
     vscode: { type: 'boolean' },
     'pr-action': { type: 'boolean' },
+    'skill-dir': { type: 'string' },
     'no-pull': { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
@@ -467,6 +469,7 @@ async function main() {
           claudeGlobal: !!(opt['claude-global'] || opt.global),
           vscode: !!opt.vscode,
           prAction: !!opt['pr-action'],
+          skillDir: opt['skill-dir'] || null,
           agentsMd: !opt['no-agents-md'],
           hooks: !opt['no-hooks'],
           useGlobalBin: !!opt['global-bin'],

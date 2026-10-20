@@ -1,6 +1,6 @@
 ---
 name: waymark
-description: Waymark — create, read, verify and share narrated, line-anchored maps of how code executes (traces of numbered locations 1a, 1b… with an annotated tree, a storytelling guide, per-node explanations and an interactive viewer). Use when the user asks how a flow works end-to-end, asks for a code map/diagram/walkthrough of a feature, mentions waymark or waymark://<id>, or before changing code an existing map covers.
+description: Waymark commands the user runs directly (/waymark <topic> | list | show | check | refresh | diff | exec | note | overview | enrich | verify | lint) to create, read, fact-check and maintain narrated, line-anchored maps of how code executes. Use when the user invokes /waymark or $waymark, asks to create/show/check a code map, or mentions waymark://<id>. For using maps while doing other work (editing, debugging, reviewing), see the using-waymark skill.
 argument-hint: "<topic> [--fast] | list | show <id> | enrich <id> | refresh <id> | lint | verify [id] | from-chat"
 ---
 # Waymark

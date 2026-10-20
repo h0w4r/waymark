@@ -21,17 +21,18 @@
           "description": "El despachador de la CLI enruta `waymark check <id>` a la función check.",
           "explanation": "Es la puerta de entrada humana al fact-check: el usuario escribe `waymark check <id>` y el `switch` del CLI llega a este caso. Solo pasa el primer argumento posicional (el id del mapa) a `check`, que hace todo el trabajo [1b]. Opciones como `--engine` o `--open` se leen después desde el objeto global `opt`. Si falta el id, `check` lanza un error con el uso correcto.",
           "path": "src/cli.js",
-          "lineNumber": 336,
+          "lineNumber": 338,
           "lineContent": "case 'check':",
           "symbol": "main",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "d615965d168b",
           "snippet": {
-            "startLine": 333,
+            "startLine": 335,
             "code": "        }),\n      );\n    }\n    case 'check':\n      return check(rest[0]);\n    case 'note': {\n      if (!rest[0] || !rest[1]) throw new Error('Usage: waymark note <id> <node> \"<text>\" [--author <name>] [--remove <index>]');\n      const res = noteMap(root(), rest[0], rest[1], { text: rest.slice(2).join(' '), author: opt.author, remove: opt.remove != null ? Number(opt.remove) : null });\n      return out(`✔ ${res.id} [${res.node}]: ${res.notes.length} note(s)`);\n    }\n    case 'notes': {\n      const doc = loadMap(root(), rest[0]);\n      for (const t of doc.traces) for (const l of t.locations) (l.notes || []).forEach((n, i) => out(`[${l.id}] #${i} ${n.author} ${String(n.at).slice(0, 10)}: ${n.text}`));\n      return;\n    }\n    case 'diff': {\n      const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });\n      out(opt.format === 'json' ? rep : renderDiff(rep));"
           },
-          "narrativeHash": "d615965d168b"
+          "narrativeHash": "d615965d168b",
+          "note": "line 336 -> 338"
         },
         {
           "id": "1b",
@@ -39,17 +40,18 @@
           "description": "Carga el mapa y ejecuta un agente con checkGuide y la orden de llamar waymark_check.",
           "explanation": "Aquí la CLI delega el trabajo a un agente nuevo. Primero `loadMap` valida que el mapa exista y obtiene su id canónico; luego construye la tarea con el procedimiento de `checkGuide` [1d] y le añade una instrucción concreta: empezar llamando a `waymark_check` [1f] para recibir el mapa con sus fragmentos. Que el agente sea nuevo es intencional: así no es quien escribió el mapa. La etiqueta `fact-check` solo sirve para el mensaje de progreso que imprime `runAgent` [1c].",
           "path": "src/cli.js",
-          "lineNumber": 256,
+          "lineNumber": 258,
           "lineContent": "const code = await runAgent(r, checkGuide(doc.id) + '\\n\\nStart by calling waymark_check(id: \"' + doc.id + '\") to get the map with its code snippets.', { label: 'fact-check' });",
           "symbol": "check",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "2385339ac1db",
           "snippet": {
-            "startLine": 253,
+            "startLine": 255,
             "code": "  if (!id) throw new Error('Usage: waymark check <id> [--engine claude|codex]');\n  const r = root();\n  const doc = loadMap(r, id);\n  const code = await runAgent(r, checkGuide(doc.id) + '\\n\\nStart by calling waymark_check(id: \"' + doc.id + '\") to get the map with its code snippets.', { label: 'fact-check' });\n  const s = checkSummary(loadMap(r, doc.id));\n  out(`\\nwaymark: ${doc.id} fact-check → ${s.supported} supported, ${s.partial} partial, ${s.unsupported} unsupported, ${s.unchecked + s.stale} unchecked (of ${s.total})`);\n  if (opt.open) openFile(path.join(mapDir(r), `${doc.id}.html`));\n  process.exitCode = code || (s.unsupported ? 1 : 0);\n}\n\nasync function enrich(id) {\n  if (!id) throw new Error('Usage: waymark enrich <id> [--engine claude|codex]');\n  const r = root();\n  const doc = loadMap(r, id);\n  const code = await runAgent(r, enrichGuide(doc.id));\n  const gaps = narrativeGaps(loadMap(r, doc.id));\n  const html = path.join(mapDir(r), `${doc.id}.html`);\n  out(`\\nwaymark: ${doc.id}  narrative ${gaps.complete ? 'complete' : 'still incomplete: ' + JSON.stringify(gaps)}\\nhtml: ${html}`);"
           },
-          "narrativeHash": "2385339ac1db"
+          "narrativeHash": "2385339ac1db",
+          "note": "line 256 -> 258"
         },
         {
           "id": "1c",
@@ -57,17 +59,18 @@
           "description": "Ejecuta Claude Code o Codex headless con herramientas de lectura y el MCP de waymark.",
           "explanation": "`runAgent` elige el motor (Claude o Codex), añade a la tarea la raíz del repo, la indicación de trabajar en autónomo con herramientas de solo lectura y la obligación de pasar `root` a las tools de waymark. Después lanza el binario como proceso hijo con `spawn`, con cwd en el repo y la salida heredada por la terminal (o redirigida a un log). La promesa se resuelve con el código de salida del proceso, que `check` usa después para decidir el código de salida [1k]. Si el binario no está en el PATH, falla antes con un mensaje claro.",
           "path": "src/cli.js",
-          "lineNumber": 190,
+          "lineNumber": 192,
           "lineContent": "const p = spawn(inv.bin.command, [...inv.bin.args, ...inv.args], {",
           "symbol": "runAgent",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "c64b4a4374fd",
           "snippet": {
-            "startLine": 187,
+            "startLine": 189,
             "code": "  out(`waymark: running ${engine}${label ? ' — ' + label : ''}…`);\n  const fd = log ? fs.openSync(log, 'w') : null;\n  const code = await new Promise((res, rej) => {\n    const p = spawn(inv.bin.command, [...inv.bin.args, ...inv.args], {\n      cwd: r,\n      stdio: [inv.stdin ? 'pipe' : 'ignore', fd ?? 'inherit', fd ?? 'inherit'],\n      shell: !!inv.bin.shell,\n    });\n    p.on('error', (e) => rej(new Error(`Could not run ${engine}: ${e.message}`)));\n    p.on('close', res);\n    if (inv.stdin) p.stdin.end(inv.stdin);\n  }).finally(() => {\n    inv.cleanup();\n    if (fd != null) fs.closeSync(fd);\n  });\n  return code ?? 1;\n}\n"
           },
-          "narrativeHash": "c64b4a4374fd"
+          "narrativeHash": "c64b4a4374fd",
+          "note": "line 190 -> 192"
         },
         {
           "id": "1d",
@@ -199,17 +202,18 @@
           "description": "Al terminar el agente, la CLI recarga el mapa e imprime el resumen de veredictos.",
           "explanation": "Cuando el proceso del agente [1c] termina, la CLI vuelve a leer el mapa del disco, porque el agente lo modificó a través de las tools MCP. `checkSummary` cuenta los nodos `supported`, `partial`, `unsupported` y los no verificados (o `stale`), y la línea siguiente imprime ese resumen. El código de salida combina el del agente con la presencia de `unsupported`, lo que permite usar `waymark check` como puerta en CI. Cómo se calculan esos estados se explica en la traza 2.",
           "path": "src/cli.js",
-          "lineNumber": 257,
+          "lineNumber": 259,
           "lineContent": "const s = checkSummary(loadMap(r, doc.id));",
           "symbol": "check",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "71f4d4f5f5de",
           "snippet": {
-            "startLine": 254,
+            "startLine": 256,
             "code": "  const r = root();\n  const doc = loadMap(r, id);\n  const code = await runAgent(r, checkGuide(doc.id) + '\\n\\nStart by calling waymark_check(id: \"' + doc.id + '\") to get the map with its code snippets.', { label: 'fact-check' });\n  const s = checkSummary(loadMap(r, doc.id));\n  out(`\\nwaymark: ${doc.id} fact-check → ${s.supported} supported, ${s.partial} partial, ${s.unsupported} unsupported, ${s.unchecked + s.stale} unchecked (of ${s.total})`);\n  if (opt.open) openFile(path.join(mapDir(r), `${doc.id}.html`));\n  process.exitCode = code || (s.unsupported ? 1 : 0);\n}\n\nasync function enrich(id) {\n  if (!id) throw new Error('Usage: waymark enrich <id> [--engine claude|codex]');\n  const r = root();\n  const doc = loadMap(r, id);\n  const code = await runAgent(r, enrichGuide(doc.id));\n  const gaps = narrativeGaps(loadMap(r, doc.id));\n  const html = path.join(mapDir(r), `${doc.id}.html`);\n  out(`\\nwaymark: ${doc.id}  narrative ${gaps.complete ? 'complete' : 'still incomplete: ' + JSON.stringify(gaps)}\\nhtml: ${html}`);\n  if (opt.open) openFile(html);"
           },
-          "narrativeHash": "71f4d4f5f5de"
+          "narrativeHash": "71f4d4f5f5de",
+          "note": "line 257 -> 259"
         }
       ],
       "tree": [
@@ -1018,16 +1022,17 @@
           "description": "La CLI calcula el reporte con la base y --range opcional.",
           "explanation": "`waymark diff [base]` toma la base del primer argumento (por defecto `HEAD`, es decir, cambios sin commitear) y `--range` para comparar `base...HEAD` como hace un PR. Delega el cálculo en diffMaps (traza 3) y recibe el reporte. Es la puerta que usa tanto el desarrollador en su terminal como la GitHub Action [4l].",
           "path": "src/cli.js",
-          "lineNumber": 349,
+          "lineNumber": 351,
           "lineContent": "const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "7c7e0f122c92",
           "snippet": {
-            "startLine": 346,
+            "startLine": 348,
             "code": "      return;\n    }\n    case 'diff': {\n      const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });\n      out(opt.format === 'json' ? rep : renderDiff(rep));\n      const f = opt['fail-on'];\n      if (\n        (f === 'touched' && rep.maps.some((m) => m.touched.length)) ||\n        (f === 'broken' && rep.maps.some((m) => m.broken.length)) ||\n        (f === 'drift' && rep.maps.some((m) => m.drift.stale || m.broken.length))\n      ) process.exitCode = 1;\n      return;\n    }\n    case 'exec': {\n      const r = root();\n      const sep = process.argv.indexOf('--');\n      let coverage;\n      let source;"
           },
-          "narrativeHash": "7c7e0f122c92"
+          "narrativeHash": "7c7e0f122c92",
+          "note": "line 349 -> 351"
         },
         {
           "id": "4h",
@@ -1035,16 +1040,17 @@
           "description": "Imprime renderDiff o el reporte crudo con --format json.",
           "explanation": "Por defecto imprime el markdown de renderDiff [4a], legible en terminal y listo para pegar en un PR. Con `--format json` saca el reporte estructurado para scripts u otras herramientas. La redirección de esta salida a un archivo es justo lo que hace el workflow [4l].",
           "path": "src/cli.js",
-          "lineNumber": 350,
+          "lineNumber": 352,
           "lineContent": "out(opt.format === 'json' ? rep : renderDiff(rep));",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "45eecd10550c",
           "snippet": {
-            "startLine": 347,
+            "startLine": 349,
             "code": "    }\n    case 'diff': {\n      const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });\n      out(opt.format === 'json' ? rep : renderDiff(rep));\n      const f = opt['fail-on'];\n      if (\n        (f === 'touched' && rep.maps.some((m) => m.touched.length)) ||\n        (f === 'broken' && rep.maps.some((m) => m.broken.length)) ||\n        (f === 'drift' && rep.maps.some((m) => m.drift.stale || m.broken.length))\n      ) process.exitCode = 1;\n      return;\n    }\n    case 'exec': {\n      const r = root();\n      const sep = process.argv.indexOf('--');\n      let coverage;\n      let source;\n      let command = '';"
           },
-          "narrativeHash": "45eecd10550c"
+          "narrativeHash": "45eecd10550c",
+          "note": "line 350 -> 352"
         },
         {
           "id": "4i",
@@ -1052,16 +1058,17 @@
           "description": "Con --fail-on, marca exitCode 1 según el tipo de impacto.",
           "explanation": "La opción `--fail-on` permite convertir el reporte en una compuerta de CI: `touched` falla si hay nodos tocados, `broken` si hay anclas rotas y `drift` si hay prosa desfasada o anclas rotas. Se usa `process.exitCode` en lugar de `process.exit` para que la salida ya impresa se vacíe completa. El workflow del PR no pasa esta opción, así que allí el diff solo informa.",
           "path": "src/cli.js",
-          "lineNumber": 356,
+          "lineNumber": 358,
           "lineContent": ") process.exitCode = 1;",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "d91c75bac35b",
           "snippet": {
-            "startLine": 353,
+            "startLine": 355,
             "code": "        (f === 'touched' && rep.maps.some((m) => m.touched.length)) ||\n        (f === 'broken' && rep.maps.some((m) => m.broken.length)) ||\n        (f === 'drift' && rep.maps.some((m) => m.drift.stale || m.broken.length))\n      ) process.exitCode = 1;\n      return;\n    }\n    case 'exec': {\n      const r = root();\n      const sep = process.argv.indexOf('--');\n      let coverage;\n      let source;\n      let command = '';\n      if (opt.lcov) {\n        coverage = parseLcov(fs.readFileSync(opt.lcov, 'utf8'), r);\n        source = 'lcov';\n        command = opt.lcov;\n      } else if (sep > -1 && process.argv[sep + 1]) {\n        const cmdArgs = process.argv.slice(sep + 1);"
           },
-          "narrativeHash": "d91c75bac35b"
+          "narrativeHash": "d91c75bac35b",
+          "note": "line 356 -> 358"
         },
         {
           "id": "4j",
@@ -1223,17 +1230,18 @@
           "description": "La CLI elige lcov o comando con V8 y aplica la cobertura.",
           "explanation": "Aquí empieza todo cuando alguien escribe `waymark exec`. Si viene `--lcov`, lee el archivo y lo pasa a [5c]; si hay un comando después de `--`, lo ejecuta con [5d] y avisa si terminó con error, aunque la cobertura se aplica igual. Un id de mapa opcional antes de `--` restringe el alcance a un solo mapa. Al final llama a [5f] e imprime por mapa cuántos nodos se ejecutaron, cuántos no y cuántos quedaron sin cobertura.",
           "path": "src/cli.js",
-          "lineNumber": 359,
+          "lineNumber": 361,
           "lineContent": "case 'exec': {",
           "symbol": "main",
-          "status": "ok",
-          "fileHash": "80692f4e5655",
+          "status": "moved",
+          "fileHash": "043887f785f7",
           "ctxHash": "accf54859b4e",
           "snippet": {
-            "startLine": 356,
+            "startLine": 358,
             "code": "      ) process.exitCode = 1;\n      return;\n    }\n    case 'exec': {\n      const r = root();\n      const sep = process.argv.indexOf('--');\n      let coverage;\n      let source;\n      let command = '';\n      if (opt.lcov) {\n        coverage = parseLcov(fs.readFileSync(opt.lcov, 'utf8'), r);\n        source = 'lcov';\n        command = opt.lcov;\n      } else if (sep > -1 && process.argv[sep + 1]) {\n        const cmdArgs = process.argv.slice(sep + 1);\n        command = cmdArgs.join(' ');\n        out(`waymark: running ${command} with V8 coverage…`);\n        const res = runWithV8Coverage(r, cmdArgs[0], cmdArgs.slice(1));"
           },
-          "narrativeHash": "accf54859b4e"
+          "narrativeHash": "accf54859b4e",
+          "note": "line 359 -> 361"
         },
         {
           "id": "5b",
@@ -1571,17 +1579,17 @@
     "createdAt": "2026-10-20T03:57:03.064Z",
     "updatedAt": "2026-10-20T03:57:16.309Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "9fce4e38f8797d3e72d7948c3f5e3646a2783d12",
+    "commit": "f58dc268a5a5544f486dfcff408d078b85a880aa",
     "branch": "main",
     "remote": "https://github.com/h0w4r/waymark",
     "anchors": {
-      "ok": 60,
-      "moved": 0,
+      "ok": 52,
+      "moved": 8,
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-20T04:02:57.867Z"
+    "verifiedAt": "2026-10-20T05:19:26.169Z"
   }
 }
