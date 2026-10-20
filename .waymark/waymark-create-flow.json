@@ -22,15 +22,14 @@
           "lineNumber": 103,
           "lineContent": "'waymark_create',",
           "symbol": "waymark_create",
-          "status": "moved",
-          "fileHash": "9337d0b00c21",
+          "status": "ok",
+          "fileHash": "8971f8920c9b",
           "snippet": {
             "startLine": 100,
             "code": "  );\n\n  server.registerTool(\n    'waymark_create',\n    {\n      title: 'Create or update a waymark',\n      description:\n        'Validates a waymark, verifies every location against the working tree (auto-correcting shifted line numbers), stores it under .waymark/ and writes a shareable HTML viewer. Pass `id` to overwrite an existing map. Returns an anchor report: fix any unresolved/missing locations and resubmit.',\n      inputSchema: {\n        ...MapInput.shape,\n        id: z.string().optional().describe('Existing waymark id to overwrite'),\n        root: rootArg,\n      },\n    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();"
           },
           "ctxHash": "b50f3ad567fb",
-          "narrativeHash": "b50f3ad567fb",
-          "note": "line 102 -> 103"
+          "narrativeHash": "b50f3ad567fb"
         },
         {
           "id": "1b",
@@ -40,15 +39,14 @@
           "path": "src/mcp.js",
           "lineNumber": 116,
           "lineContent": "const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });",
-          "status": "moved",
-          "fileHash": "9337d0b00c21",
+          "status": "ok",
+          "fileHash": "8971f8920c9b",
           "snippet": {
             "startLine": 113,
             "code": "    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      const next = [];\n      if (!report.healthy) {\n        next.push('Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".');\n      }\n      if (!narrative.complete) {\n        next.push('Narrative is incomplete (see \"narrative\"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id=\"' + doc.id + '\").');\n      }\n      const lint = lintMap(doc);\n      if (lint.errors) next.push('Lint found ' + lint.errors + ' error(s) (e.g. references to unknown nodes): fix them with waymark_annotate.');\n      if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,"
           },
           "ctxHash": "5a4b4e7ff99f",
-          "narrativeHash": "5a4b4e7ff99f",
-          "note": "line 115 -> 116"
+          "narrativeHash": "5a4b4e7ff99f"
         },
         {
           "id": "1c",
@@ -58,15 +56,14 @@
           "path": "src/mcp.js",
           "lineNumber": 117,
           "lineContent": "server.sendResourceListChanged();",
-          "status": "moved",
-          "fileHash": "9337d0b00c21",
+          "status": "ok",
+          "fileHash": "8971f8920c9b",
           "snippet": {
             "startLine": 114,
             "code": "    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      const next = [];\n      if (!report.healthy) {\n        next.push('Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".');\n      }\n      if (!narrative.complete) {\n        next.push('Narrative is incomplete (see \"narrative\"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id=\"' + doc.id + '\").');\n      }\n      const lint = lintMap(doc);\n      if (lint.errors) next.push('Lint found ' + lint.errors + ' error(s) (e.g. references to unknown nodes): fix them with waymark_annotate.');\n      if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,\n        html: htmlPath,"
           },
           "ctxHash": "90b2b6dd2cb9",
-          "narrativeHash": "90b2b6dd2cb9",
-          "note": "line 116 -> 117"
+          "narrativeHash": "90b2b6dd2cb9"
         },
         {
           "id": "1d",
@@ -205,15 +202,14 @@
           "lineNumber": 208,
           "lineContent": "export function anchorMap(root, map) {",
           "symbol": "anchorMap",
-          "status": "moved",
+          "status": "ok",
           "fileHash": "ca1778435482",
           "snippet": {
             "startLine": 205,
             "code": "}\n\n/** Anchors every location of a normalized map in place; returns a summary report. */\nexport function anchorMap(root, map) {\n  const cache = new FileCache(root);\n  const report = { ok: 0, moved: 0, fuzzy: 0, relocated: 0, unresolved: 0, missing: 0, issues: [] };\n  for (const trace of map.traces) {\n    trace.locations = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      report[r.status]++;\n      if (r.status !== 'ok') report.issues.push({ id: r.id, status: r.status, path: r.path, note: r.note });\n      return r;\n    });\n  }\n  report.total = map.traces.reduce((n, t) => n + t.locations.length, 0);\n  report.healthy = report.unresolved === 0 && report.missing === 0;\n  return report;\n}"
           },
           "ctxHash": "3e16c9c5c719",
-          "narrativeHash": "3e16c9c5c719",
-          "note": "line 181 -> 208"
+          "narrativeHash": "3e16c9c5c719"
         },
         {
           "id": "2b",
@@ -393,15 +389,14 @@
           "lineNumber": 951,
           "lineContent": "function select(id, opts = {}) {",
           "symbol": "select",
-          "status": "moved",
+          "status": "ok",
           "fileHash": "9845fbe7136b",
           "snippet": {
             "startLine": 948,
             "code": "  }\n\n  // ---------------------------------------------------------------- selection & views\n  function select(id, opts = {}) {\n    const l = byId.get(id);\n    if (!l) return;\n    state.sel = id;\n    if (host && opts.from !== 'host' && opts.from !== 'boot') host.postMessage({ type: 'select', id, path: l.path, line: l.lineNumber });\n    $$('.loc.sel', mapPane).forEach((e) => e.classList.remove('sel'));\n    const card = $('.loc[data-id=\"' + id + '\"]:not(.ref-again)', mapPane);\n    if (card) {\n      card.classList.add('sel');\n      card.closest('.trace').classList.remove('closed');\n      if (opts.from !== 'map') card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });\n    }\n    showInCode(l);\n    if (dg) {\n      const n = focusDiagram(id);"
           },
           "ctxHash": "bfe356e2774e",
-          "narrativeHash": "bfe356e2774e",
-          "note": "line 945 -> 951"
+          "narrativeHash": "bfe356e2774e"
         },
         {
           "id": "3c",
@@ -411,15 +406,14 @@
           "path": "src/mcp.js",
           "lineNumber": 347,
           "lineContent": "server.registerResource(",
-          "status": "moved",
-          "fileHash": "9337d0b00c21",
+          "status": "ok",
+          "fileHash": "8971f8920c9b",
           "snippet": {
             "startLine": 344,
             "code": "  );\n\n  // @-mentionable context: waymark://<id>\n  server.registerResource(\n    'waymark',\n    new ResourceTemplate('waymark://{id}', {\n      list: async () => ({\n        resources: listMaps(rootOf()).map((m) => ({\n          uri: `waymark://${m.id}`,\n          name: m.title,\n          description: m.description,\n          mimeType: 'text/markdown',\n        })),\n      }),\n      complete: { id: (v) => listMaps(rootOf()).map((m) => m.id).filter((i) => i.startsWith(v)) },\n    }),\n    { title: 'Waymark', description: 'A waymark rendered as markdown context', mimeType: 'text/markdown' },\n    async (uri, { id }) => ({"
           },
           "ctxHash": "dd0446b9229a",
-          "narrativeHash": "dd0446b9229a",
-          "note": "line 346 -> 347"
+          "narrativeHash": "dd0446b9229a"
         },
         {
           "id": "3d",
@@ -522,18 +516,18 @@
     "createdAt": "2026-10-01T16:36:38.822Z",
     "updatedAt": "2026-10-20T02:27:22.896Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "8a8e4b9492eb63a7729118d1add1655683b5ff37",
+    "commit": "980a6c9d5e9f426c94f8630370d43c03fbc72c4a",
     "branch": "main",
     "remote": "https://github.com/h0w4r/waymark",
     "anchors": {
-      "ok": 14,
-      "moved": 6,
+      "ok": 20,
+      "moved": 0,
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-20T02:22:07.199Z"
+    "verifiedAt": "2026-10-20T02:46:17.107Z"
   },
   "narrativeHash": "b535b75d1c4a"
 }

@@ -22,15 +22,14 @@
           "path": "src/cli.js",
           "lineNumber": 298,
           "lineContent": "const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);",
-          "status": "moved",
+          "status": "ok",
           "fileHash": "0b24cb27279b",
           "ctxHash": "bca6983752e2",
           "snippet": {
             "startLine": 295,
             "code": "    }\n    case 'verify': {\n      const r = root();\n      const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);\n      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.narrative.stale) {\n          const parts = [];\n          if (v.narrative.nodes.length) parts.push('nodes ' + v.narrative.nodes.map((n) => `[${n}]`).join(', '));\n          if (v.narrative.traces.length) parts.push('trace guides ' + v.narrative.traces.join(', '));\n          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);\n        }\n        if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;"
           },
-          "narrativeHash": "bca6983752e2",
-          "note": "line 297 -> 298"
+          "narrativeHash": "bca6983752e2"
         },
         {
           "id": "1b",
@@ -41,7 +40,7 @@
           "lineNumber": 312,
           "lineContent": "return text(ids.map((i) => verifyMap(r, i, { fix })));",
           "status": "ok",
-          "fileHash": "9337d0b00c21",
+          "fileHash": "8971f8920c9b",
           "ctxHash": "6983bf27cfdc",
           "snippet": {
             "startLine": 309,
@@ -492,15 +491,14 @@
           "path": "src/cli.js",
           "lineNumber": 302,
           "lineContent": "const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';",
-          "status": "moved",
+          "status": "ok",
           "fileHash": "0b24cb27279b",
           "ctxHash": "afab7a169973",
           "snippet": {
             "startLine": 299,
             "code": "      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.narrative.stale) {\n          const parts = [];\n          if (v.narrative.nodes.length) parts.push('nodes ' + v.narrative.nodes.map((n) => `[${n}]`).join(', '));\n          if (v.narrative.traces.length) parts.push('trace guides ' + v.narrative.traces.join(', '));\n          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);\n        }\n        if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }"
           },
-          "narrativeHash": "afab7a169973",
-          "note": "line 301 -> 302"
+          "narrativeHash": "afab7a169973"
         },
         {
           "id": "3g",
@@ -510,15 +508,14 @@
           "path": "src/cli.js",
           "lineNumber": 312,
           "lineContent": "if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;",
-          "status": "moved",
+          "status": "ok",
           "fileHash": "0b24cb27279b",
           "ctxHash": "025d2a1088a8",
           "snippet": {
             "startLine": 309,
             "code": "          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);\n        }\n        if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }\n    case 'render': {\n      const r = root();\n      const p = writeHtml(r, loadMap(r, rest[0]));\n      out(p);\n      if (opt.open) openFile(p);\n      return;\n    }\n    case 'delete':\n      return out(`deleted ${deleteMap(root(), rest[0])}`);\n    case 'suggest': {"
           },
-          "narrativeHash": "025d2a1088a8",
-          "note": "line 311 -> 312"
+          "narrativeHash": "025d2a1088a8"
         }
       ],
       "tree": [
@@ -582,17 +579,17 @@
     "createdAt": "2026-10-01T17:03:45.835Z",
     "updatedAt": "2026-10-20T02:29:39.515Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "747b7649d3e0857e5e5e83c66d9e5d4846349893",
+    "commit": "980a6c9d5e9f426c94f8630370d43c03fbc72c4a",
     "branch": "main",
     "remote": "https://github.com/h0w4r/waymark",
     "anchors": {
-      "ok": 21,
-      "moved": 3,
+      "ok": 24,
+      "moved": 0,
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-20T02:43:14.630Z"
+    "verifiedAt": "2026-10-20T02:46:16.877Z"
   }
 }
