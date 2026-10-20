@@ -46,6 +46,8 @@ const vscodeStub = {
   ViewColumn: { One: 1, Beside: -2 },
   OverviewRulerLane: { Right: 4 },
   StatusBarAlignment: { Left: 1 },
+  ProgressLocation: { Notification: 15 },
+  env: { openExternal: async () => true },
   TextEditorRevealType: { InCenterIfOutsideViewport: 2 },
   window: {
     visibleTextEditors: [],
@@ -53,7 +55,8 @@ const vscodeStub = {
     createTextEditorDecorationType: (o) => ({ o, dispose() {} }),
     createStatusBarItem: () => ({ show() {}, hide() {}, dispose() {} }),
     registerTreeDataProvider: (id, p) => { log.providers.tree = p; return { dispose() {} }; },
-    showInformationMessage: () => {},
+    showInformationMessage: async (msg, ...choices) => { log.infos = [...(log.infos || []), msg]; return (log.choices || []).shift(); },
+    withProgress: async (opts, fn) => fn(),
     showWarningMessage: (m) => { throw new Error('unexpected warning: ' + m); },
     setStatusBarMessage: () => {},
     showQuickPick: async (items) => items[0],
@@ -91,7 +94,7 @@ const vscodeStub = {
   languages: { registerCodeLensProvider: (sel, p) => { log.providers.lens = p; return { dispose() {} }; } },
   commands: {
     registerCommand: (id, fn) => { log.commands.set(id, fn); return { dispose() {} }; },
-    executeCommand: async () => {},
+    executeCommand: async (id, ...args) => { log.executed = [...(log.executed || []), [id, ...args]]; },
   },
 };
 
@@ -123,8 +126,15 @@ before(() => {
 
 after(() => fs.rmSync(repo, { recursive: true, force: true }));
 
+const store = new Map();
+const context = {
+  subscriptions: [],
+  extension: { packageJSON: { version: '0.2.0' } },
+  globalState: { get: (k, d) => (store.has(k) ? store.get(k) : d), update: async (k, v) => store.set(k, v) },
+};
+
 test('activates, builds the tree and decorates anchored lines', () => {
-  const api = ext.activate({ subscriptions: [] });
+  const api = ext.activate(context);
   assert.equal(api.allMaps().length, 1);
   const roots = log.providers.tree.getChildren();
   assert.equal(roots.length, 1);
@@ -172,6 +182,39 @@ test('Alt+] walks nodes; viewer syncs both ways', async () => {
   await log.commands.get('waymark.explain')(key, '1a');
   await new Promise((r) => setTimeout(r, 400));
   assert.deepEqual(log.posted.at(-1), { type: 'explain', id: '1a' });
+});
+
+test('self-update: finds a newer GitHub release, downloads the VSIX and installs it', async () => {
+  const model = require('../vscode/lib/model.js');
+  assert.equal(model.isNewer('v0.10.0', '0.9.3'), true);
+  assert.equal(model.isNewer('0.2.0', '0.2.0'), false);
+  assert.equal(model.isNewer('0.1.9', '0.2.0'), false);
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async (url) => {
+    calls.push(url);
+    if (/releases\/latest/.test(url)) {
+      return { ok: true, json: async () => ({ tag_name: 'v0.3.0', html_url: 'https://x/rel', assets: [{ name: 'waymark-vscode-0.3.0.vsix', browser_download_url: 'https://x/a.vsix' }] }) };
+    }
+    return { ok: true, arrayBuffer: async () => new TextEncoder().encode('PK-fake').buffer };
+  };
+  try {
+    log.choices = ['Install', 'Reload'];
+    await log.commands.get('waymark.checkForUpdates')();
+    assert.deepEqual(calls, ['https://api.github.com/repos/h0w4r/waymark/releases/latest', 'https://x/a.vsix']);
+    const ids = log.executed.map((e) => e[0]);
+    assert.ok(ids.includes('workbench.extensions.installExtension'));
+    assert.ok(ids.includes('workbench.action.reloadWindow'));
+    assert.match(log.executed.find((e) => e[0] === 'workbench.extensions.installExtension')[1].fsPath, /waymark-vscode-0\.3\.0\.vsix$/);
+    // Up to date → no download, just a message.
+    calls.length = 0;
+    globalThis.fetch = async (url) => (calls.push(url), { ok: true, json: async () => ({ tag_name: 'v0.2.0', assets: [{ name: 'w.vsix', browser_download_url: 'u' }] }) });
+    await log.commands.get('waymark.checkForUpdates')();
+    assert.equal(calls.length, 1);
+    assert.match(log.infos.at(-1), /up to date/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });
 
 test('records navigation history for suggestions', () => {

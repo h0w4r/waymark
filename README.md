@@ -101,6 +101,55 @@ waymark install --vscode      # empaqueta vscode/ como VSIX y lo instala con `co
 - **Historial de navegación** (en `.waymark/.local/`, ignorado por git) que alimenta las sugerencias de `/waymark`.
 - Comandos que lanzan `claude "/waymark …"` (crear, añadir storytelling, refrescar explicaciones, verificar).
 
+## Instalar y actualizar (sin agente)
+
+Waymark tiene dos piezas que se actualizan distinto:
+
+| Pieza | Dónde vive | Cómo se actualiza |
+|---|---|---|
+| **MCP + CLI + hooks + skill** | se ejecutan **directamente desde tu clon** del repo (las configs apuntan a `<clon>/src/…`) | `git pull` en el clon. Si cambiaron la skill, el subagente o los hooks, vuelve a correr el install |
+| **Extensión de VS Code** | instalada en VS Code (`~/.vscode/extensions`) a partir de un `.vsix` | instalar el `.vsix` nuevo (VS Code reemplaza la versión anterior) |
+
+**Opción A — un solo comando desde el clon** (MCP, skill, hooks y extensión):
+
+```bash
+cd <clon-de-waymark>
+npm run update          # = waymark update --claude-global --vscode
+```
+
+`waymark update` hace `git pull --ff-only`, corre `npm ci` si cambió el lockfile, reinstala la skill/subagente/hooks de Claude Code y empaqueta e instala la extensión. Se niega a actualizar si tienes cambios sin commitear en el clon.
+
+**Opción B — sólo la extensión, desde el clon:**
+
+```bash
+npm run vscode:install  # empaqueta vscode/ y ejecuta code --install-extension <vsix> --force
+```
+
+**Opción C — sin clonar nada, desde GitHub Releases:**
+
+1. Descarga `waymark-vscode-<versión>.vsix` de la página de [Releases](https://github.com/h0w4r/waymark/releases).
+2. En VS Code: vista *Extensions* → menú `…` → **Install from VSIX…** → elige el archivo. O en una terminal:
+   ```bash
+   code --install-extension waymark-vscode-0.2.0.vsix --force
+   ```
+   (Cursor: `cursor --install-extension …`; Windsurf: `windsurf --install-extension …`.)
+3. *Developer: Reload Window*.
+
+**Opción D — automática:** la extensión consulta GitHub Releases una vez al día; si hay una versión más nueva muestra *"Waymark X is available"* → **Install** → **Reload**. También a mano con *Waymark: Check for updates*. Se desactiva con `waymark.updates.check: false`.
+
+Desinstalar: `code --uninstall-extension h0w4r.waymark-vscode`.
+
+### Publicar una versión nueva (mantenedores)
+
+```bash
+npm run version:set -- 0.3.0           # sube la versión en package.json, vscode/package.json y el servidor MCP
+git commit -am "Release v0.3.0"
+git tag v0.3.0
+git push && git push origin v0.3.0
+```
+
+El workflow [`release`](.github/workflows/release.yml) corre los tests, comprueba que las versiones coinciden con el tag, empaqueta el `.vsix` y crea el GitHub Release con el archivo adjunto. A partir de ahí la opción D lo ofrece a todas las extensiones instaladas.
+
 ### Codex CLI, IDE y desktop
 
 Los tres comparten `~/.codex/config.toml` y además leen `.codex/config.toml` del proyecto **solo si el proyecto es de confianza** (Codex lo pregunta al abrir la carpeta).

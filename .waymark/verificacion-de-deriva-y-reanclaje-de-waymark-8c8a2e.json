@@ -20,16 +20,17 @@
           "description": "La CLI selecciona mapas y pasa la opción `fix` a `verifyMap`.",
           "explanation": "El comando `verify` toma el primer argumento como ID; si falta, `listMaps` aporta todos los IDs. Cada ID llega a `verifyMap` con `opt.fix`, de modo que la selección no altera la lógica de cotejo. Después, la CLI traduce el informe a una línea de estado y cambios visibles [3f]. Si se verifican varios mapas, acumula fallos para decidir una sola salida [3g].",
           "path": "src/cli.js",
-          "lineNumber": 284,
+          "lineNumber": 298,
           "lineContent": "const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);",
-          "status": "ok",
-          "fileHash": "ee028fc18c7e",
+          "status": "moved",
+          "fileHash": "0b24cb27279b",
           "ctxHash": "bca6983752e2",
           "snippet": {
-            "startLine": 281,
+            "startLine": 295,
             "code": "    }\n    case 'verify': {\n      const r = root();\n      const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);\n      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.narrative.stale) {\n          const parts = [];\n          if (v.narrative.nodes.length) parts.push('nodes ' + v.narrative.nodes.map((n) => `[${n}]`).join(', '));\n          if (v.narrative.traces.length) parts.push('trace guides ' + v.narrative.traces.join(', '));\n          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);\n        }\n        if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;"
           },
-          "narrativeHash": "bca6983752e2"
+          "narrativeHash": "bca6983752e2",
+          "note": "line 297 -> 298"
         },
         {
           "id": "1b",
@@ -489,16 +490,17 @@
           "description": "La CLI muestra `BROKEN`, `STALE` u `OK`, los cambios y la revisión narrativa.",
           "explanation": "Para cada informe de `verifyMap` [1a], la CLI elige `BROKEN` si `broken` es positivo, luego `STALE` si `stale` es verdadero y, si no, `OK`. Imprime el ID, commits del mapa y HEAD y la marca `(fixed)` cuando hubo escritura. También muestra cada entrada de `changes` con estado, origen, destino y nota [1f]. Si `narrative.stale`, añade una línea `narrative review` que enumera nodos, guías de trazo e historia afectados y sugiere `waymark refresh <id>` [1h]. El rótulo puede seguir diciendo `STALE` en la ejecución que aplicó `fix`, porque `stale` describe la deriva detectada antes de guardar.",
           "path": "src/cli.js",
-          "lineNumber": 288,
+          "lineNumber": 302,
           "lineContent": "const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';",
-          "status": "ok",
-          "fileHash": "ee028fc18c7e",
+          "status": "moved",
+          "fileHash": "0b24cb27279b",
           "ctxHash": "afab7a169973",
           "snippet": {
-            "startLine": 285,
+            "startLine": 299,
             "code": "      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.narrative.stale) {\n          const parts = [];\n          if (v.narrative.nodes.length) parts.push('nodes ' + v.narrative.nodes.map((n) => `[${n}]`).join(', '));\n          if (v.narrative.traces.length) parts.push('trace guides ' + v.narrative.traces.join(', '));\n          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);\n        }\n        if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }"
           },
-          "narrativeHash": "afab7a169973"
+          "narrativeHash": "afab7a169973",
+          "note": "line 301 -> 302"
         },
         {
           "id": "3g",
@@ -506,16 +508,17 @@
           "description": "Falla por anclas rotas, deriva estricta sin fijar o narrativa desfasada.",
           "explanation": "La CLI acumula `bad` mientras procesa uno o varios mapas [1a]. Lo activa si el informe tiene `broken`, si `--strict` encuentra `stale` sin `fixed`, o si `--strict-narrative` encuentra deriva narrativa [1h]. Al terminar, establece `process.exitCode = 1` solo cuando `bad` es verdadero, lo que permite usar la verificación en automatizaciones. `--fix` puede suprimir el fallo estricto por deriva de anclas guardada, pero no un fallo por anclas rotas [1g] ni por narrativa desfasada, que persiste hasta reescribir la prosa.",
           "path": "src/cli.js",
-          "lineNumber": 298,
+          "lineNumber": 312,
           "lineContent": "if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;",
-          "status": "ok",
-          "fileHash": "ee028fc18c7e",
+          "status": "moved",
+          "fileHash": "0b24cb27279b",
           "ctxHash": "025d2a1088a8",
           "snippet": {
-            "startLine": 295,
+            "startLine": 309,
             "code": "          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);\n        }\n        if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }\n    case 'render': {\n      const r = root();\n      const p = writeHtml(r, loadMap(r, rest[0]));\n      out(p);\n      if (opt.open) openFile(p);\n      return;\n    }\n    case 'delete':\n      return out(`deleted ${deleteMap(root(), rest[0])}`);\n    case 'suggest': {"
           },
-          "narrativeHash": "025d2a1088a8"
+          "narrativeHash": "025d2a1088a8",
+          "note": "line 311 -> 312"
         }
       ],
       "tree": [
@@ -579,18 +582,17 @@
     "createdAt": "2026-10-01T17:03:45.835Z",
     "updatedAt": "2026-10-20T02:29:39.515Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "8a8e4b9492eb63a7729118d1add1655683b5ff37",
+    "commit": "747b7649d3e0857e5e5e83c66d9e5d4846349893",
     "branch": "main",
     "remote": "https://github.com/h0w4r/waymark",
     "anchors": {
-      "ok": 24,
-      "moved": 0,
+      "ok": 21,
+      "moved": 3,
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
-      "missing": 0,
-      "total": 24,
-      "healthy": true
-    }
+      "missing": 0
+    },
+    "verifiedAt": "2026-10-20T02:43:14.630Z"
   }
 }

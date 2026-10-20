@@ -40,6 +40,8 @@ Usage: waymark <command> [options]
   lint [id]              Quality checks: unknown [refs], missing narrative, uncited nodes… [--strict] [--json]
   for-file <path> [line] Maps/traces/nodes covering a file [--json]
   hook <kind>            Claude Code hook entry point (pre-edit | post-edit | post-read), reads stdin JSON
+  update                 Update this checkout: git pull --ff-only, npm ci if the lockfile changed, then
+                         re-install what you ask for [--claude-global] [--vscode] [--target <repo>] [--no-pull]
   render <id>            Regenerate the HTML viewer [--open]
   delete <id>            Delete a map
   suggest                Suggest topics from recent work [--json]
@@ -82,6 +84,7 @@ const { values: opt, positionals } = parseArgs({
     'no-hooks': { type: 'boolean' },
     'global-bin': { type: 'boolean' },
     vscode: { type: 'boolean' },
+    'no-pull': { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -244,6 +247,17 @@ async function main() {
       const res = mapsForFile(root(), rest[0], { line: rest[1] ? Number(rest[1]) : null });
       if (opt.json) return out({ path: res.path, maps: res.maps.map(({ doc, ...m }) => m) });
       return out(renderFileContext(res, { maxChars: 20000 }) || `No waymark map covers ${res.path}.`);
+    }
+    case 'update': {
+      const { selfUpdate } = await import('./update.js');
+      return out(
+        selfUpdate({
+          pull: !opt['no-pull'],
+          claudeGlobal: !!(opt['claude-global'] || opt.global),
+          vscode: !!opt.vscode,
+          target: opt.target ? resolveRoot(opt.target) : null,
+        }),
+      );
     }
     case 'hook': {
       const { runHook } = await import('./hooks.js');

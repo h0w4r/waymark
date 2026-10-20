@@ -16,7 +16,7 @@ import { renderMarkdown } from './render/markdown.js';
 import { renderMermaid } from './render/mermaid.js';
 import { openFile } from './open.js';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 const rootArg = z.string().optional().describe('Repository root. Defaults to the server working directory / WAYMARK_ROOT');
 
 const text = (t) => ({ content: [{ type: 'text', text: typeof t === 'string' ? t : JSON.stringify(t, null, 2) }] });

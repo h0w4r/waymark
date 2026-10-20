@@ -121,4 +121,23 @@ function recordVisit(root, relPath, now = Date.now()) {
   return e;
 }
 
-module.exports = { PALETTE, loadWorkspace, normalize, nodeAt, step, gutterSvg, nodeMarkdown, recordVisit };
+/** Semver-ish comparison: is `a` (e.g. "0.3.0" or "v0.3.0") newer than `b`? Pre-release tags ignored. */
+function isNewer(a, b) {
+  const parse = (v) => String(v || '').replace(/^v/, '').split('-')[0].split('.').map((x) => parseInt(x, 10) || 0);
+  const x = parse(a);
+  const y = parse(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
+  }
+  return false;
+}
+
+/** From a GitHub "latest release" payload: { version, url (vsix), notes } or null. */
+function releaseInfo(rel) {
+  if (!rel || !rel.tag_name || !Array.isArray(rel.assets)) return null;
+  const asset = rel.assets.find((a) => /\.vsix$/i.test(a.name));
+  if (!asset) return null;
+  return { version: rel.tag_name.replace(/^v/, ''), url: asset.browser_download_url, name: asset.name, notes: rel.html_url };
+}
+
+module.exports = { PALETTE, loadWorkspace, normalize, nodeAt, step, gutterSvg, nodeMarkdown, recordVisit, isNewer, releaseInfo };

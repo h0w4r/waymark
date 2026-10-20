@@ -1,11 +1,15 @@
 {
   "name": "waymark",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Hierarchical, line-anchored maps of how code executes — MCP server, CLI and shareable HTML viewer for agentic harnesses",
   "main": "src/mcp.js",
   "scripts": {
     "test": "node --test test/waymark.test.js test/narrative.test.js test/agentic.test.js test/vscode.test.js",
-    "mcp": "node src/mcp.js"
+    "mcp": "node src/mcp.js",
+    "vscode:package": "cd vscode && npx --yes @vscode/vsce@latest package --no-dependencies",
+    "vscode:install": "node src/cli.js install --no-claude --no-codex --no-agents-md --vscode",
+    "version:set": "node scripts/set-version.mjs",
+    "update": "node src/cli.js update --claude-global --vscode"
   },
   "keywords": [
     "mcp",

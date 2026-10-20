@@ -2,21 +2,49 @@
   "name": "waymark-vscode",
   "displayName": "Waymark",
   "description": "Narrated, line-anchored maps of how code executes — tree, gutter markers, CodeLens walkthrough and an embedded viewer synced with the editor.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "h0w4r",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/h0w4r/waymark.git" },
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["Visualization", "Other"],
-  "keywords": ["codemap", "code map", "waymark", "walkthrough", "ai"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/h0w4r/waymark.git"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Other"
+  ],
+  "keywords": [
+    "codemap",
+    "code map",
+    "waymark",
+    "walkthrough",
+    "ai"
+  ],
   "main": "./extension.js",
-  "activationEvents": ["workspaceContains:.waymark/*.json", "onView:waymark.maps"],
+  "activationEvents": [
+    "workspaceContains:.waymark/*.json",
+    "onView:waymark.maps"
+  ],
   "contributes": {
     "viewsContainers": {
-      "activitybar": [{ "id": "waymark", "title": "Waymark", "icon": "media/waymark.svg" }]
+      "activitybar": [
+        {
+          "id": "waymark",
+          "title": "Waymark",
+          "icon": "media/waymark.svg"
+        }
+      ]
     },
     "views": {
-      "waymark": [{ "id": "waymark.maps", "name": "Maps" }]
+      "waymark": [
+        {
+          "id": "waymark.maps",
+          "name": "Maps"
+        }
+      ]
     },
     "viewsWelcome": [
       {
@@ -26,53 +54,192 @@
       }
     ],
     "commands": [
-      { "command": "waymark.refresh", "title": "Reload maps", "category": "Waymark", "icon": "$(refresh)" },
-      { "command": "waymark.createMap", "title": "Create a map…", "category": "Waymark", "icon": "$(add)" },
-      { "command": "waymark.openViewer", "title": "Open map viewer", "category": "Waymark", "icon": "$(preview)" },
-      { "command": "waymark.setActiveMap", "title": "Set active map", "category": "Waymark", "icon": "$(target)" },
-      { "command": "waymark.next", "title": "Next node", "category": "Waymark" },
-      { "command": "waymark.prev", "title": "Previous node", "category": "Waymark" },
-      { "command": "waymark.explainAtCursor", "title": "Explain the map node at the cursor", "category": "Waymark" },
-      { "command": "waymark.enrichMap", "title": "Add storytelling to map (agent)", "category": "Waymark" },
-      { "command": "waymark.refreshNarrative", "title": "Refresh outdated explanations (agent)", "category": "Waymark" },
-      { "command": "waymark.verifyMaps", "title": "Verify maps against the code (agent)", "category": "Waymark" },
-      { "command": "waymark.revealNode", "title": "Reveal node", "category": "Waymark" },
-      { "command": "waymark.goto", "title": "Go to node", "category": "Waymark" },
-      { "command": "waymark.explain", "title": "Explain node", "category": "Waymark" }
+      {
+        "command": "waymark.refresh",
+        "title": "Reload maps",
+        "category": "Waymark",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "waymark.createMap",
+        "title": "Create a map…",
+        "category": "Waymark",
+        "icon": "$(add)"
+      },
+      {
+        "command": "waymark.openViewer",
+        "title": "Open map viewer",
+        "category": "Waymark",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "waymark.setActiveMap",
+        "title": "Set active map",
+        "category": "Waymark",
+        "icon": "$(target)"
+      },
+      {
+        "command": "waymark.next",
+        "title": "Next node",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.prev",
+        "title": "Previous node",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.explainAtCursor",
+        "title": "Explain the map node at the cursor",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.enrichMap",
+        "title": "Add storytelling to map (agent)",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.refreshNarrative",
+        "title": "Refresh outdated explanations (agent)",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.verifyMaps",
+        "title": "Verify maps against the code (agent)",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.checkForUpdates",
+        "title": "Check for updates",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.revealNode",
+        "title": "Reveal node",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.goto",
+        "title": "Go to node",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.explain",
+        "title": "Explain node",
+        "category": "Waymark"
+      }
     ],
     "menus": {
       "view/title": [
-        { "command": "waymark.createMap", "when": "view == waymark.maps", "group": "navigation@1" },
-        { "command": "waymark.refresh", "when": "view == waymark.maps", "group": "navigation@2" }
+        {
+          "command": "waymark.createMap",
+          "when": "view == waymark.maps",
+          "group": "navigation@1"
+        },
+        {
+          "command": "waymark.refresh",
+          "when": "view == waymark.maps",
+          "group": "navigation@2"
+        }
       ],
       "view/item/context": [
-        { "command": "waymark.openViewer", "when": "view == waymark.maps && viewItem == waymarkMap", "group": "inline@1" },
-        { "command": "waymark.setActiveMap", "when": "view == waymark.maps && viewItem == waymarkMap", "group": "inline@2" },
-        { "command": "waymark.enrichMap", "when": "view == waymark.maps && viewItem == waymarkMap", "group": "agent@1" },
-        { "command": "waymark.refreshNarrative", "when": "view == waymark.maps && viewItem == waymarkMap", "group": "agent@2" }
+        {
+          "command": "waymark.openViewer",
+          "when": "view == waymark.maps && viewItem == waymarkMap",
+          "group": "inline@1"
+        },
+        {
+          "command": "waymark.setActiveMap",
+          "when": "view == waymark.maps && viewItem == waymarkMap",
+          "group": "inline@2"
+        },
+        {
+          "command": "waymark.enrichMap",
+          "when": "view == waymark.maps && viewItem == waymarkMap",
+          "group": "agent@1"
+        },
+        {
+          "command": "waymark.refreshNarrative",
+          "when": "view == waymark.maps && viewItem == waymarkMap",
+          "group": "agent@2"
+        }
       ],
       "editor/context": [
-        { "command": "waymark.explainAtCursor", "when": "waymark.hasMaps", "group": "navigation@90" }
+        {
+          "command": "waymark.explainAtCursor",
+          "when": "waymark.hasMaps",
+          "group": "navigation@90"
+        }
       ],
       "commandPalette": [
-        { "command": "waymark.revealNode", "when": "false" },
-        { "command": "waymark.goto", "when": "false" },
-        { "command": "waymark.explain", "when": "false" }
+        {
+          "command": "waymark.revealNode",
+          "when": "false"
+        },
+        {
+          "command": "waymark.goto",
+          "when": "false"
+        },
+        {
+          "command": "waymark.explain",
+          "when": "false"
+        }
       ]
     },
     "keybindings": [
-      { "command": "waymark.next", "key": "alt+]", "when": "editorTextFocus && waymark.hasMaps" },
-      { "command": "waymark.prev", "key": "alt+[", "when": "editorTextFocus && waymark.hasMaps" }
+      {
+        "command": "waymark.next",
+        "key": "alt+]",
+        "when": "editorTextFocus && waymark.hasMaps"
+      },
+      {
+        "command": "waymark.prev",
+        "key": "alt+[",
+        "when": "editorTextFocus && waymark.hasMaps"
+      }
     ],
     "configuration": {
       "title": "Waymark",
       "properties": {
-        "waymark.gutter.enabled": { "type": "boolean", "default": true, "description": "Show node ids (1a, 2b…) in the gutter of anchored lines, with the explanation on hover." },
-        "waymark.codeLens.enabled": { "type": "boolean", "default": true, "description": "Show '2b · description · Explain · ← prev · next →' above anchored lines." },
-        "waymark.codeLens.scope": { "type": "string", "enum": ["activeMap", "allMaps"], "default": "activeMap", "description": "CodeLens for the active map only, or for every map." },
-        "waymark.viewer.syncEditor": { "type": "boolean", "default": true, "description": "Selecting a node in the viewer reveals it in the editor." },
-        "waymark.history.enabled": { "type": "boolean", "default": true, "description": "Record files you open (in .waymark/.local, git-ignored) so topic suggestions follow your navigation." },
-        "waymark.agentCommand": { "type": "string", "default": "claude", "description": "Agent CLI used for create/enrich/refresh/verify commands (receives '/waymark …')." }
+        "waymark.gutter.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show node ids (1a, 2b…) in the gutter of anchored lines, with the explanation on hover."
+        },
+        "waymark.codeLens.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show '2b · description · Explain · ← prev · next →' above anchored lines."
+        },
+        "waymark.codeLens.scope": {
+          "type": "string",
+          "enum": [
+            "activeMap",
+            "allMaps"
+          ],
+          "default": "activeMap",
+          "description": "CodeLens for the active map only, or for every map."
+        },
+        "waymark.viewer.syncEditor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Selecting a node in the viewer reveals it in the editor."
+        },
+        "waymark.history.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Record files you open (in .waymark/.local, git-ignored) so topic suggestions follow your navigation."
+        },
+        "waymark.updates.check": {
+          "type": "boolean",
+          "default": true,
+          "description": "Check GitHub Releases once a day and offer to install newer versions of the extension."
+        },
+        "waymark.agentCommand": {
+          "type": "string",
+          "default": "claude",
+          "description": "Agent CLI used for create/enrich/refresh/verify commands (receives '/waymark …')."
+        }
       }
     }
   }

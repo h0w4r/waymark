@@ -4,7 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { waymarkGuide } from './guide.js';
-import { resolveCommand } from './bin.js';
+import { resolveCommand, argsFor } from './bin.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const MCP_ENTRY = path.join(HERE, 'mcp.js').replace(/\\/g, '/');
@@ -166,7 +166,7 @@ function codexGlobal(serverCmd, written) {
   upsertTomlBlock(file, codexServerToml(serverCmd), written);
   const codex = resolveCommand('codex');
   if (codex) {
-    const r = spawnSync(codex.command, [...codex.args, 'mcp', 'get', 'waymark'], { encoding: 'utf8', shell: !!codex.shell });
+    const r = spawnSync(codex.command, argsFor(codex, ['mcp', 'get', 'waymark']), { encoding: 'utf8', shell: !!codex.shell });
     written.push(r.status === 0 ? 'codex global: `codex mcp get waymark` OK' : `codex global: check failed: ${r.stderr || r.stdout}`);
   }
   // User-level skill so the desktop app picks it up in any workspace.
@@ -235,7 +235,7 @@ export function installVscode(written) {
   }
   const version = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version;
   const vsix = path.join(dir, `waymark-vscode-${version}.vsix`);
-  const pack = spawnSync(npx.command, [...npx.args, '--yes', '@vscode/vsce@latest', 'package', '--no-dependencies', '-o', vsix], {
+  const pack = spawnSync(npx.command, argsFor(npx, ['--yes', '@vscode/vsce@latest', 'package', '--no-dependencies', '-o', vsix]), {
     cwd: dir,
     encoding: 'utf8',
     shell: !!npx.shell,
@@ -244,7 +244,7 @@ export function installVscode(written) {
     written.push(`vscode: packaging failed: ${(pack.stderr || pack.stdout || '').slice(-400)}`);
     return;
   }
-  const inst = spawnSync(code.command, [...code.args, '--install-extension', vsix, '--force'], { encoding: 'utf8', shell: !!code.shell });
+  const inst = spawnSync(code.command, argsFor(code, ['--install-extension', vsix, '--force']), { encoding: 'utf8', shell: !!code.shell });
   written.push(inst.status === 0 ? `vscode: installed ${path.basename(vsix)} (reload VS Code windows)` : `vscode: install failed: ${inst.stderr || inst.stdout}`);
 }
 
@@ -259,7 +259,7 @@ function claudeGlobal(serverCmd, written, { hooks = true, useGlobalBin = false }
     written.push('claude global: `claude` not found on PATH; MCP server not registered');
     return;
   }
-  const run = (args) => spawnSync(claude.command, [...claude.args, ...args], { encoding: 'utf8', shell: !!claude.shell });
+  const run = (args) => spawnSync(claude.command, argsFor(claude, args), { encoding: 'utf8', shell: !!claude.shell });
   const get = run(['mcp', 'get', 'waymark']);
   if (get.status === 0 && /scope:s*user/i.test(get.stdout)) {
     written.push('claude global: user-scoped MCP server "waymark" already registered');

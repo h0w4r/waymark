@@ -308,6 +308,49 @@ function mapArg(arg) {
   return activeMap();
 }
 
+// ------------------------------------------------------------------ self-update from GitHub Releases
+const RELEASES_API = 'https://api.github.com/repos/h0w4r/waymark/releases/latest';
+const DAY = 24 * 60 * 60 * 1000;
+
+async function checkForUpdates(context, { manual = false } = {}) {
+  if (!manual) {
+    if (!cfg().get('updates.check', true)) return;
+    const last = context.globalState.get('waymark.lastUpdateCheck', 0);
+    if (Date.now() - last < DAY) return;
+  }
+  await context.globalState.update('waymark.lastUpdateCheck', Date.now());
+  const current = context.extension?.packageJSON?.version || '0.0.0';
+  let info = null;
+  try {
+    const res = await fetch(RELEASES_API, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'waymark-vscode' } });
+    if (res.ok) info = M.releaseInfo(await res.json());
+  } catch (e) {
+    if (manual) vscode.window.showWarningMessage(`Waymark: could not check for updates (${e.message}).`);
+    return;
+  }
+  if (!info || !M.isNewer(info.version, current)) {
+    if (manual) vscode.window.showInformationMessage(`Waymark ${current} is up to date.`);
+    return;
+  }
+  const choice = await vscode.window.showInformationMessage(
+    `Waymark ${info.version} is available (installed: ${current}).`,
+    'Install',
+    'Release notes',
+    'Later',
+  );
+  if (choice === 'Release notes') return vscode.env.openExternal(vscode.Uri.parse(info.notes));
+  if (choice !== 'Install') return;
+  await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Installing Waymark ${info.version}…` }, async () => {
+    const res = await fetch(info.url, { headers: { 'User-Agent': 'waymark-vscode' } });
+    if (!res.ok) throw new Error(`download failed (${res.status})`);
+    const file = path.join(require('os').tmpdir(), info.name);
+    fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()));
+    await vscode.commands.executeCommand('workbench.extensions.installExtension', vscode.Uri.file(file));
+  });
+  const reload = await vscode.window.showInformationMessage(`Waymark ${info.version} installed. Reload the window to use it.`, 'Reload');
+  if (reload === 'Reload') vscode.commands.executeCommand('workbench.action.reloadWindow');
+}
+
 // ------------------------------------------------------------------ lifecycle
 function reload() {
   state.workspaces = (vscode.workspace.workspaceFolders || []).map((f) => M.loadWorkspace(f.uri.fsPath));
@@ -370,6 +413,9 @@ function activate(context) {
       if (x) runAgent(`/waymark refresh ${x.m.id}`);
     }),
     vscode.commands.registerCommand('waymark.verifyMaps', () => runAgent('/waymark verify')),
+    vscode.commands.registerCommand('waymark.checkForUpdates', () =>
+      checkForUpdates(context, { manual: true }).catch((e) => vscode.window.showErrorMessage(`Waymark update failed: ${e.message}`)),
+    ),
     vscode.window.onDidChangeVisibleTextEditors(refreshDecorations),
     vscode.window.onDidChangeTextEditorSelection(onSelection),
     vscode.window.onDidChangeActiveTextEditor((ed) => {
@@ -404,6 +450,9 @@ function activate(context) {
   context.subscriptions.push(watcher);
 
   reload();
+  // Daily, silent unless an update exists; never blocks activation.
+  const upd = setTimeout(() => checkForUpdates(context).catch(() => {}), 5000);
+  if (upd.unref) upd.unref();
   // Lightweight introspection for tests / troubleshooting.
   return { state, reload, allMaps };
 }
