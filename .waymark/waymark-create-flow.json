@@ -3,15 +3,15 @@
   "id": "waymark-create-flow",
   "title": "waymark_create: from tool call to shareable viewer",
   "description": "How an agent's waymark_create call becomes a verified JSON map and a self-contained HTML viewer, and how it is later reused as context. Key takeaway: every location is re-anchored against the working tree by its exact line text, so line numbers from the LLM are hints, not truth.",
-  "story": "An agent has just traced a flow through a codebase and wants to save it. It calls the `waymark_create` MCP tool [1a] with a title, some traces and a list of locations. Each location has a path, a line number it *believes* is correct, and the exact text of that line. Nothing in that payload is trusted. The handler resolves the repository root and passes the raw map to `saveMap` [1b][1d]. This is the only path that writes maps to disk.\n\n`saveMap` first runs `normalizeMap` [1e]. It parses the input with Zod, fills in missing ids (`1`, `1a`, `1b`…), builds a linear call tree when none was given, and rejects tree refs or cross-trace links that point to unknown nodes. Then the key step: `anchorMap` [1f] → [2a] checks every location against the files actually on disk. For each one, `anchorLocation` [2b] opens the file through a root-jailed cache [2g]. If the path has disappeared, it looks for a renamed file [2c]. It then tries, in order, the claimed line [2d], the same text on a different line [2e], and finally a partial or symbol match [2f]. The result is a status (`ok`, `moved`, `relocated`, `fuzzy`, `unresolved`, `missing`), a corrected line number, a code snippet, a file hash and a context hash of the code around the anchor. **The LLM's line numbers are hints. The line text is the anchor.**\n\nOnce anchored, the narrative is baselined: each node, trace and the story remember the context hashes of the code they were written for. The document gets git metadata (commit, branch, remote) and is written as `.waymark/<id>.json` [1g], the canonical, committable artifact. A self-contained HTML viewer is written next to it [1h]. The server then sends `resourceListChanged` [1c] so clients can @-mention `waymark://<id>` immediately. The tool's reply includes the anchor report, missing narrative and lint results, and tells the agent what to fix and resubmit under the same id.\n\nFrom there the map has three audiences (trace 3). Humans open the HTML viewer [3a] and click through nodes [3b], optionally inside an editor that follows the selection. Agents load it as markdown context through the `waymark://` resource [3c], rendered by `renderMarkdown` [3d], whole or one trace/node at a time. CI and maintainers run `verifyMap` [3e], which reuses the same `anchorLocation` [2b] to catch drift: lines that moved, anchors that broke, files whose hash changed, and prose that describes code which has since been edited. One anchoring algorithm handles creating a map, keeping its anchors honest and keeping its story honest.",
+  "story": "An agent has just traced a flow through a codebase and wants to save it. It calls the `waymark_create` MCP tool [1a] with a title, some traces and a list of locations. Each location has a path, a line number it *believes* is correct, and the exact text of that line. Nothing in that payload is trusted. The handler resolves the repository root and passes the raw map to `saveMap` [1b][1d]. This is the single path that creates (or overwrites) a map from input; later edits such as annotations, notes, verdicts and `verify --fix` only patch the stored JSON.\n\n`saveMap` first runs `normalizeMap` [1e]. It parses the input with Zod, fills in missing ids (`1`, `1a`, `1b`…), builds a linear call tree when none was given, and rejects tree refs or cross-trace links that point to unknown nodes. Then the key step: `anchorMap` [1f] → [2a] checks every location against the files actually on disk. For each one, `anchorLocation` [2b] opens the file through a root-jailed cache [2g]. If the path has disappeared, it looks for a renamed file [2c]. It then tries, in order, the claimed line [2d], the same text on a different line [2e], and finally a partial or symbol match [2f]. The result is a status (`ok`, `moved`, `relocated`, `fuzzy`, `unresolved`, `missing`), a corrected line number, a code snippet, a file hash and a context hash of the code around the anchor. **The LLM's line numbers are hints. The line text is the anchor.**\n\nOnce anchored, the narrative is baselined: each node, trace and the story remember the context hashes of the code they were written for. If the map is being overwritten, what humans and tools attached to it survives: notes stay, and fact-check verdicts and execution evidence are kept only where the code they vouch for has not changed. The document gets git metadata (commit, branch, remote) and is written as `.waymark/<id>.json` [1g], the canonical, committable artifact. A self-contained HTML viewer is written next to it [1h]. The server then sends `resourceListChanged` [1c] so clients can @-mention `waymark://<id>` immediately. The tool's reply includes the anchor report, missing narrative and lint results, and tells the agent what to fix and resubmit under the same id.\n\nFrom there the map has three audiences (trace 3). Humans open the HTML viewer [3a] and click through nodes [3b], optionally inside an editor that follows the selection. Agents load it as markdown context through the `waymark://` resource [3c], rendered by `renderMarkdown` [3d], whole or one trace/node at a time. CI and maintainers run `verifyMap` [3e], which reuses the same `anchorLocation` [2b] to catch drift: lines that moved, anchors that broke, files whose hash changed, and prose that describes code which has since been edited. One anchoring algorithm handles creating a map, keeping its anchors honest and keeping its story honest.",
   "query": "how does waymark_create work end to end?",
   "traces": [
     {
       "id": "1",
       "title": "MCP entry and persistence",
       "description": "The MCP tool handler resolves the repo root, delegates to the store, and notifies clients that the resource list changed.",
-      "motivation": "An MCP tool call is untrusted input from an LLM. This trace makes sure there is **exactly one writer** (`saveMap`), so every map on disk has been normalized, anchored and stamped in the same way, whether it came from MCP, the CLI or a re-save. Keeping the MCP handler thin also lets the CLI (`waymark create map.json`) share the same behavior.",
-      "details": "The tool is registered with the flattened `MapInput` schema [1a], so the model sees a flat, documented argument list instead of a nested blob. The handler's only real work is resolving the root (explicit `root`, then `WAYMARK_ROOT`, then the client's root) and calling the store [1b].\n\nInside **saveMap** [1d] the order matters. Normalization [1e] comes first so the anchorer gets ids and clean POSIX paths. Anchoring [1f] runs next so the stored snippets, line numbers and context hashes reflect the working tree. Then the narrative is baselined against those context hashes, so later code edits can flag the prose as stale. Only then is the JSON written [1g], followed by the HTML viewer rendered from that same document [1h]. When `id` is passed, the existing map's `createdAt` is kept, so an update does not look like a brand-new map.\n\nAfter the write, [1c] notifies MCP clients that the resource list changed, which makes `@waymark:waymark://<id>` usable straight away. The response returns the anchor report, the narrative gaps and a lint pass, with `next` hints telling the agent to resubmit with the same id, fill missing prose with `waymark_annotate`, or fix lint errors, so a weak map is corrected within the same agent turn.",
+      "motivation": "An MCP tool call is untrusted input from an LLM. This trace makes sure there is **exactly one entry point that creates maps** (`saveMap`), so every map on disk has been normalized, anchored and stamped in the same way, whether it came from MCP, the CLI or a re-save. Keeping the MCP handler thin also lets the CLI (`waymark create map.json`) share the same behavior.",
+      "details": "The tool is registered with the flattened `MapInput` schema [1a], so the model sees a flat, documented argument list instead of a nested blob. The handler's only real work is resolving the root (explicit `root`, then `WAYMARK_ROOT`, then the client's root) and calling the store [1b].\n\nInside **saveMap** [1d] the order matters. Normalization [1e] comes first so the anchorer gets ids and clean POSIX paths. Anchoring [1f] runs next so the stored snippets, line numbers and context hashes reflect the working tree. Then the narrative is baselined against those context hashes, so later code edits can flag the prose as stale. When `id` is passed, the existing map is loaded so its `createdAt` is kept and human-owned state is carried over: notes always, fact-check verdicts and execution evidence only while the code (and prose) they were recorded for is unchanged. Only then is the JSON written [1g], followed by the HTML viewer rendered from that same document [1h], which also refreshes the `.waymark/index.html` listing.\n\nAfter the write, [1c] notifies MCP clients that the resource list changed, which makes `@waymark:waymark://<id>` usable straight away. The response returns the anchor report, the narrative gaps and a lint pass, with `next` hints telling the agent to resubmit with the same id, fill missing prose with `waymark_annotate`, or fix lint errors, so a weak map is corrected within the same agent turn.",
       "locations": [
         {
           "id": "1a",
@@ -19,17 +19,32 @@
           "description": "Registers waymark_create with a flat MapInput schema plus optional id/root.",
           "explanation": "This is where the whole flow starts: the MCP server publishes `waymark_create` to the client. The input schema spreads `MapInput.shape` and adds `id` and `root`, so the model sees a flat list of documented arguments instead of a nested object. That makes well-formed calls more likely. The tool description tells the model up front that line numbers will be auto-corrected and that unresolved anchors must be fixed and resubmitted, which sets expectations for the reply. The handler is wrapped in `safe(...)`, so a validation error (for example a duplicate location id from [1e]) comes back as an `isError` tool result instead of crashing the server.",
           "path": "src/mcp.js",
-          "lineNumber": 103,
+          "lineNumber": 113,
           "lineContent": "'waymark_create',",
           "symbol": "waymark_create",
           "status": "ok",
-          "fileHash": "8971f8920c9b",
+          "fileHash": "2b0b28761299",
           "snippet": {
-            "startLine": 100,
+            "startLine": 110,
             "code": "  );\n\n  server.registerTool(\n    'waymark_create',\n    {\n      title: 'Create or update a waymark',\n      description:\n        'Validates a waymark, verifies every location against the working tree (auto-correcting shifted line numbers), stores it under .waymark/ and writes a shareable HTML viewer. Pass `id` to overwrite an existing map. Returns an anchor report: fix any unresolved/missing locations and resubmit.',\n      inputSchema: {\n        ...MapInput.shape,\n        id: z.string().optional().describe('Existing waymark id to overwrite'),\n        root: rootArg,\n      },\n    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();"
           },
           "ctxHash": "b50f3ad567fb",
-          "narrativeHash": "b50f3ad567fb"
+          "narrativeHash": "b50f3ad567fb",
+          "exec": {
+            "hit": true,
+            "count": 1,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "b50f3ad567fb"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "b50f3ad567fb",
+            "proseHash": "4830ecc10432"
+          }
         },
         {
           "id": "1b",
@@ -37,16 +52,33 @@
           "description": "Handler resolves the root and hands the raw map to saveMap.",
           "explanation": "The handler pulls `id` and `root` out of the arguments and treats everything else as the map. `rootOf` resolves the repository root from the explicit argument, then `WAYMARK_ROOT`, then the root the client announced. Getting this wrong would anchor against the wrong tree, which is why the waymark agent always passes `root`. All the real work is delegated to `saveMap` [1d], which returns the stored document, the anchor report and the file paths. The handler then builds the reply: the `waymark://` URI, file paths, the report, and a `next` hint that tells the agent to resubmit with the same `id` if the map is unhealthy.",
           "path": "src/mcp.js",
-          "lineNumber": 116,
+          "lineNumber": 126,
           "lineContent": "const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });",
           "status": "ok",
-          "fileHash": "8971f8920c9b",
+          "fileHash": "2b0b28761299",
           "snippet": {
-            "startLine": 113,
-            "code": "    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      const next = [];\n      if (!report.healthy) {\n        next.push('Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".');\n      }\n      if (!narrative.complete) {\n        next.push('Narrative is incomplete (see \"narrative\"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id=\"' + doc.id + '\").');\n      }\n      const lint = lintMap(doc);\n      if (lint.errors) next.push('Lint found ' + lint.errors + ' error(s) (e.g. references to unknown nodes): fix them with waymark_annotate.');\n      if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,"
+            "startLine": 123,
+            "code": "    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      const next = [];\n      if (!report.healthy) {\n        next.push('Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".');\n      }\n      if (!narrative.complete) {\n        next.push('Narrative is incomplete (see \"narrative\"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id=\"' + doc.id + '\").');\n      }\n      const lint = lintMap(doc, { mapIds: new Set(listMaps(r).map((m) => m.id)) });\n      if (lint.errors) next.push('Lint found ' + lint.errors + ' error(s) (e.g. references to unknown nodes): fix them with waymark_annotate.');\n      if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,"
           },
           "ctxHash": "5a4b4e7ff99f",
-          "narrativeHash": "5a4b4e7ff99f"
+          "narrativeHash": "5a4b4e7ff99f",
+          "exec": {
+            "hit": true,
+            "count": 4,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "5a4b4e7ff99f"
+          },
+          "check": {
+            "verdict": "partial",
+            "issues": [
+              "'the waymark agent always passes root' is about agent instructions, not verifiable in this code."
+            ],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "5a4b4e7ff99f",
+            "proseHash": "284a616ef712"
+          }
         },
         {
           "id": "1c",
@@ -54,51 +86,102 @@
           "description": "Notifies MCP clients that the waymark:// resource list changed.",
           "explanation": "Right after the map is written, the server sends `resourceListChanged`. Clients such as Claude Code then re-query the resource template's `list` callback [3c] and the new map appears in @-mention autocompletion straight away, with no server restart. Without this call, the map would exist on disk but clients would not see it until they refreshed on their own. Note that it fires even when the anchor report is unhealthy: the map is saved either way, and health is reported separately.",
           "path": "src/mcp.js",
-          "lineNumber": 117,
+          "lineNumber": 127,
           "lineContent": "server.sendResourceListChanged();",
           "status": "ok",
-          "fileHash": "8971f8920c9b",
+          "fileHash": "2b0b28761299",
           "snippet": {
-            "startLine": 114,
-            "code": "    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      const next = [];\n      if (!report.healthy) {\n        next.push('Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".');\n      }\n      if (!narrative.complete) {\n        next.push('Narrative is incomplete (see \"narrative\"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id=\"' + doc.id + '\").');\n      }\n      const lint = lintMap(doc);\n      if (lint.errors) next.push('Lint found ' + lint.errors + ' error(s) (e.g. references to unknown nodes): fix them with waymark_annotate.');\n      if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,\n        html: htmlPath,"
+            "startLine": 124,
+            "code": "    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      const next = [];\n      if (!report.healthy) {\n        next.push('Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".');\n      }\n      if (!narrative.complete) {\n        next.push('Narrative is incomplete (see \"narrative\"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id=\"' + doc.id + '\").');\n      }\n      const lint = lintMap(doc, { mapIds: new Set(listMaps(r).map((m) => m.id)) });\n      if (lint.errors) next.push('Lint found ' + lint.errors + ' error(s) (e.g. references to unknown nodes): fix them with waymark_annotate.');\n      if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,\n        html: htmlPath,"
           },
           "ctxHash": "90b2b6dd2cb9",
-          "narrativeHash": "90b2b6dd2cb9"
+          "narrativeHash": "90b2b6dd2cb9",
+          "exec": {
+            "hit": true,
+            "count": 4,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "90b2b6dd2cb9"
+          },
+          "check": {
+            "verdict": "partial",
+            "issues": [
+              "Client behaviour (Claude Code re-querying list, autocompletion) is unverifiable from server code."
+            ],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "90b2b6dd2cb9",
+            "proseHash": "ef7086da4994"
+          }
         },
         {
           "id": "1d",
           "title": "saveMap",
-          "description": "Single writer: normalize, anchor, baseline narrative, stamp git metadata, write files.",
-          "explanation": "`saveMap` is the only function that turns input into a stored map, and both the MCP tool [1b] and the CLI use it. It runs normalization [1e] and anchoring [1f] in order, then calls `baselineNarrative(map, { force: true })`: since the prose was just written, every node, trace and the story record a hash of the code they describe, which later lets verify [3e] flag prose that has gone stale. The id is either the caller's `id` (overwrite) or a slug of the title plus 3 random bytes. When overwriting, it loads the existing map just to keep its `createdAt`. It stamps `commit`, `branch` and `remote`, stores the anchor counts in `meta.anchors` (without the noisy `issues` list), and returns `narrativeGaps(doc)` so the handler can tell the agent which story, motivation, details or explanations are still empty.",
+          "description": "Single writer: normalize, anchor, baseline narrative, carry over human state, write files.",
+          "explanation": "`saveMap` is the only function that turns input into a stored map, and the MCP tool [1b], the CLI and the parallel finalize flow all use it. It runs normalization [1e] and anchoring [1f] in order, then calls `baselineNarrative(map, { force: true })`: since the prose was just written, every node, trace and the story record a hash of the code they describe, which later lets verify [3e] flag prose that has gone stale. The id is either the caller's `id` (overwrite) or a slug of the title plus 3 random bytes. When overwriting, it loads the existing map and runs `carryOver`: human notes on a node always survive, while fact-check verdicts (`check`) and execution evidence (`exec`) are kept only if the node's `ctxHash` (and, for checks, its prose hash) is unchanged, so a stale verdict is never carried onto new code. The original `createdAt` is preserved too. It stamps `commit`, `branch` and `remote`, stores the anchor counts in `meta.anchors` (without the noisy `issues` list), and returns `narrativeGaps(doc)` so the handler can tell the agent which story, motivation, details or explanations are still empty.",
           "path": "src/store.js",
-          "lineNumber": 32,
+          "lineNumber": 35,
           "lineContent": "export function saveMap(root, input, { id, html = true } = {}) {",
           "symbol": "saveMap",
           "status": "ok",
-          "fileHash": "ac474b197808",
+          "fileHash": "3c9966c81adf",
           "snippet": {
-            "startLine": 29,
-            "code": "}\n\n/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  baselineNarrative(map, { force: true });\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),"
+            "startLine": 32,
+            "code": "}\n\n/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  baselineNarrative(map, { force: true });\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  if (existing) carryOver(existing, map);\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,"
           },
-          "ctxHash": "30dfa70eaec2",
-          "narrativeHash": "30dfa70eaec2"
+          "ctxHash": "45159e8044ab",
+          "narrativeHash": "45159e8044ab",
+          "exec": {
+            "hit": true,
+            "count": 4,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "45159e8044ab"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [
+              "fixed: said only MCP and CLI use saveMap; parallel finalize (src/parallel.js) also calls it."
+            ],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "45159e8044ab",
+            "proseHash": "0c0685c98d2b"
+          }
         },
         {
           "id": "1e",
           "title": "Normalize",
           "description": "Zod-validates the input, assigns ids, defaults the tree, rejects dangling refs.",
-          "explanation": "`normalizeMap` parses the input with the Zod `MapInput` schema, then fills in what the LLM left out. Missing trace ids become `1`, `2`… and missing location ids become `1a`, `1b`…. Ids must match `[A-Za-z0-9_-]{1,16}` and be unique across the whole map. Paths are converted to POSIX form and stripped of a leading `./`, so Windows-style input anchors the same way. A legacy `guide` field is moved to `details`. If no `tree` is given, a linear chain is built (each step nested under the previous one). Finally, every tree ref and cross-trace link is checked, and a reference to an unknown location throws before anything touches the disk.",
+          "explanation": "`normalizeMap` parses the input with the Zod `MapInput` schema, then fills in what the LLM left out. Missing trace ids become `1`, `2`… and missing location ids become `1a`, `1b`…. Trace and location ids must match `[A-Za-z0-9_-]{1,16}`, and location ids must be unique across the whole map. Paths are converted to POSIX form and stripped of a leading `./`, so Windows-style input anchors the same way. A legacy `guide` field is moved to `details`. If no `tree` is given, a linear chain is built (each step nested under the previous one). Finally, every tree ref and cross-trace link is checked, and a reference to an unknown location throws before anything touches the disk.",
           "path": "src/store.js",
-          "lineNumber": 33,
+          "lineNumber": 36,
           "lineContent": "const map = normalizeMap(input);",
           "status": "ok",
-          "fileHash": "ac474b197808",
+          "fileHash": "3c9966c81adf",
           "snippet": {
-            "startLine": 30,
-            "code": "\n/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  baselineNarrative(map, { force: true });\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),\n      branch: currentBranch(root),"
+            "startLine": 33,
+            "code": "\n/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  baselineNarrative(map, { force: true });\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  if (existing) carryOver(existing, map);\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),"
           },
-          "ctxHash": "0309b4bbe044",
-          "narrativeHash": "0309b4bbe044"
+          "ctxHash": "112e22efbe85",
+          "narrativeHash": "112e22efbe85",
+          "exec": {
+            "hit": true,
+            "count": 4,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "112e22efbe85"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [
+              "fixed: said all ids must be unique; only location ids are uniqueness-checked (trace ids are only format-checked)."
+            ],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "112e22efbe85",
+            "proseHash": "e8610c74be4b"
+          }
         },
         {
           "id": "1f",
@@ -106,16 +189,31 @@
           "description": "Verifies every location against the working tree and computes context hashes; see trace 2.",
           "explanation": "This single call links the store to the anchoring engine [2a]. It changes `map.traces[*].locations` in place, replacing each location with its anchored version: corrected line, real line text, snippet, file hash, status and a `ctxHash` of the code block around the anchor. It returns the health report that ends up in both the tool reply and `meta.anchors`. Because it runs before the narrative baseline on the next line and before the JSON write [1g], both the stored snippets and the narrative hashes reflect the tree at save time, never the LLM's guess. An unhealthy report does not stop the save: the map is still persisted so the agent can fix it under the same id.",
           "path": "src/store.js",
-          "lineNumber": 34,
+          "lineNumber": 37,
           "lineContent": "const report = anchorMap(root, map);",
           "status": "ok",
-          "fileHash": "ac474b197808",
+          "fileHash": "3c9966c81adf",
           "snippet": {
-            "startLine": 31,
-            "code": "/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  baselineNarrative(map, { force: true });\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),\n      branch: currentBranch(root),\n      remote: remoteWebUrl(root),"
+            "startLine": 34,
+            "code": "/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  baselineNarrative(map, { force: true });\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  if (existing) carryOver(existing, map);\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),\n      branch: currentBranch(root),"
           },
-          "ctxHash": "374324f8ef46",
-          "narrativeHash": "374324f8ef46"
+          "ctxHash": "592c1ab4fb58",
+          "narrativeHash": "592c1ab4fb58",
+          "exec": {
+            "hit": true,
+            "count": 4,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "592c1ab4fb58"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "592c1ab4fb58",
+            "proseHash": "1d6d50ff1ca5"
+          }
         },
         {
           "id": "1g",
@@ -123,33 +221,65 @@
           "description": "Writes the canonical .waymark/<id>.json, meant to be committed.",
           "explanation": "The `.waymark/` directory is created if needed and the full document is written as pretty-printed JSON. That file is the source of truth: the HTML viewer, the markdown resource and `verify` are all derived from it. Pretty-printing with 2-space indentation keeps git diffs readable when a map is re-anchored or annotated. Writing it before the HTML means that if rendering fails, the canonical data is already safe.",
           "path": "src/store.js",
-          "lineNumber": 53,
+          "lineNumber": 57,
           "lineContent": "fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));",
           "status": "ok",
-          "fileHash": "ac474b197808",
+          "fileHash": "3c9966c81adf",
           "snippet": {
-            "startLine": 50,
-            "code": "    },\n  };\n  fs.mkdirSync(mapDir(root), { recursive: true });\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n  const htmlPath = html ? writeHtml(root, doc) : null;\n  return { doc, report, narrative: narrativeGaps(doc), jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc) }));\n  return p;\n}\n\nconst MAX_FILE_BYTES = 512 * 1024;\nconst MAX_TOTAL_BYTES = 8 * 1024 * 1024;\n\n/** Snapshot of every referenced file, embedded in the viewer (code tabs, gutter markers). */"
+            "startLine": 54,
+            "code": "    },\n  };\n  fs.mkdirSync(mapDir(root), { recursive: true });\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n  const htmlPath = html ? writeHtml(root, doc) : null;\n  return { doc, report, narrative: narrativeGaps(doc), jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc), maps: mapIndex(root, doc.id) }));\n  writeIndex(root);\n  return p;\n}\n\n/** Light index of the other maps (for mapRef links between maps). */\nfunction mapIndex(root, selfId) {\n  return listMaps(root)"
           },
           "ctxHash": "51ba5a2f2cea",
-          "narrativeHash": "51ba5a2f2cea"
+          "narrativeHash": "51ba5a2f2cea",
+          "exec": {
+            "hit": true,
+            "count": 4,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "51ba5a2f2cea"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "51ba5a2f2cea",
+            "proseHash": "3381c296db5a"
+          }
         },
         {
           "id": "1h",
           "title": "Write HTML",
           "description": "Renders the self-contained HTML viewer next to the JSON.",
-          "explanation": "Unless `html: false` is passed, `writeHtml` renders the document with `renderHtml` [3a] and saves it as `.waymark/<id>.html`. The viewer is regenerated from the stored document on every save, annotate or `verify --fix`, so it never drifts from the JSON. The returned `htmlPath` goes back to the agent so it can hand the user a file to open or share.",
+          "explanation": "Unless `html: false` is passed, `writeHtml` renders the document with `renderHtml` [3a] and saves it as `.waymark/<id>.html`, then refreshes `.waymark/index.html`. The viewer is regenerated from the stored document on every save, annotate, note, recorded check and `verify --fix` that writes changes, so it never drifts from the JSON. The returned `htmlPath` goes back to the agent so it can hand the user a file to open or share.",
           "path": "src/store.js",
-          "lineNumber": 54,
+          "lineNumber": 58,
           "lineContent": "const htmlPath = html ? writeHtml(root, doc) : null;",
           "status": "ok",
-          "fileHash": "ac474b197808",
+          "fileHash": "3c9966c81adf",
           "snippet": {
-            "startLine": 51,
-            "code": "  };\n  fs.mkdirSync(mapDir(root), { recursive: true });\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n  const htmlPath = html ? writeHtml(root, doc) : null;\n  return { doc, report, narrative: narrativeGaps(doc), jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc) }));\n  return p;\n}\n\nconst MAX_FILE_BYTES = 512 * 1024;\nconst MAX_TOTAL_BYTES = 8 * 1024 * 1024;\n\n/** Snapshot of every referenced file, embedded in the viewer (code tabs, gutter markers). */\nexport function collectFiles(root, doc) {"
+            "startLine": 55,
+            "code": "  };\n  fs.mkdirSync(mapDir(root), { recursive: true });\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n  const htmlPath = html ? writeHtml(root, doc) : null;\n  return { doc, report, narrative: narrativeGaps(doc), jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc), maps: mapIndex(root, doc.id) }));\n  writeIndex(root);\n  return p;\n}\n\n/** Light index of the other maps (for mapRef links between maps). */\nfunction mapIndex(root, selfId) {\n  return listMaps(root)\n    .filter((m) => m.id !== selfId)"
           },
           "ctxHash": "0481119e2bf2",
-          "narrativeHash": "0481119e2bf2"
+          "narrativeHash": "0481119e2bf2",
+          "exec": {
+            "hit": true,
+            "count": 4,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "0481119e2bf2"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [
+              "fixed: verify --fix only rewrites HTML when something changed; also note/check writes regenerate it, and writeHtml refreshes index.html."
+            ],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "0481119e2bf2",
+            "proseHash": "d4e056746e09"
+          }
         }
       ],
       "tree": [
@@ -184,7 +314,16 @@
           ]
         }
       ],
-      "narrativeHash": "3bedbe3bbb54"
+      "narrativeHash": "5879feb5d24e",
+      "check": {
+        "verdict": "supported",
+        "issues": [
+          "fixed: motivation said saveMap is the only writer; persist() also writes on annotate/note/check/verify --fix. Now says single entry point that creates maps."
+        ],
+        "at": "2026-10-20T03:50:45.737Z",
+        "checker": "claude-opus-5-5 (waymark fact-checker)",
+        "hash": "5879feb5d24e"
+      }
     },
     {
       "id": "2",
@@ -199,17 +338,32 @@
           "description": "Anchors all locations with one shared FileCache and builds a health report.",
           "explanation": "`anchorMap` sets up a single `FileCache` for the whole map, so each file is read, split and hashed only once even if many locations point at it. It replaces each location with the result of [2b] and adds one to the matching status counter. Anything that isn't `ok` goes into `issues` with its note, which is what tells the agent exactly what to fix. `healthy` is defined narrowly as no `unresolved` and no `missing`: a `moved` or `fuzzy` location still counts as healthy but is reported for review.",
           "path": "src/anchor.js",
-          "lineNumber": 208,
+          "lineNumber": 218,
           "lineContent": "export function anchorMap(root, map) {",
           "symbol": "anchorMap",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "snippet": {
-            "startLine": 205,
+            "startLine": 215,
             "code": "}\n\n/** Anchors every location of a normalized map in place; returns a summary report. */\nexport function anchorMap(root, map) {\n  const cache = new FileCache(root);\n  const report = { ok: 0, moved: 0, fuzzy: 0, relocated: 0, unresolved: 0, missing: 0, issues: [] };\n  for (const trace of map.traces) {\n    trace.locations = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      report[r.status]++;\n      if (r.status !== 'ok') report.issues.push({ id: r.id, status: r.status, path: r.path, note: r.note });\n      return r;\n    });\n  }\n  report.total = map.traces.reduce((n, t) => n + t.locations.length, 0);\n  report.healthy = report.unresolved === 0 && report.missing === 0;\n  return report;\n}"
           },
           "ctxHash": "3e16c9c5c719",
-          "narrativeHash": "3e16c9c5c719"
+          "narrativeHash": "3e16c9c5c719",
+          "exec": {
+            "hit": true,
+            "count": 3,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "3e16c9c5c719"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "3e16c9c5c719",
+            "proseHash": "6e7c114ae4ba"
+          }
         },
         {
           "id": "2b",
@@ -221,30 +375,70 @@
           "lineContent": "export function anchorLocation(cache, loc) {",
           "symbol": "anchorLocation",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "snippet": {
             "startLine": 77,
             "code": " * status: ok | moved (same text, other line) | fuzzy (partial match) | relocated (file moved)\n *         | unresolved (text not found) | missing (file not found)\n */\nexport function anchorLocation(cache, loc) {\n  let relPath = loc.path;\n  let file = cache.read(relPath);\n  let relocatedFrom = null;\n  if (!file) {\n    const alt = cache.findByBasename(relPath);\n    if (alt && (file = cache.read(alt))) {\n      relocatedFrom = relPath;\n      relPath = alt;\n    }\n  }\n  if (!file) {\n    return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };\n  }\n"
           },
           "ctxHash": "eb2635fd3913",
-          "narrativeHash": "eb2635fd3913"
+          "narrativeHash": "eb2635fd3913",
+          "exec": {
+            "hit": true,
+            "count": 21,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "eb2635fd3913"
+          },
+          "notes": [
+            {
+              "text": "Ejemplo de nota humana: si cambias el orden de búsqueda (exacta → parcial → símbolo), los mapas existentes pueden re-anclarse en otra línea.",
+              "author": "demo",
+              "at": "2026-10-20T03:08:43.440Z",
+              "ctxHash": "eb2635fd3913"
+            }
+          ],
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "eb2635fd3913",
+            "proseHash": "672c60cf7771"
+          }
         },
         {
           "id": "2c",
           "title": "Renamed file fallback",
           "description": "Finds a renamed or moved file by basename and longest path suffix.",
-          "explanation": "When the claimed path no longer exists, `findByBasename` searches the git-tracked files (loaded lazily, once per cache) for the same file name. A single hit is accepted. With several hits, it scores each by how many trailing path segments match the original and picks the best only if it shares more than the basename and is not tied. If git is unavailable or the result is ambiguous, it returns null and the location ends up `missing`. A successful match becomes `relocated` instead of `ok` or `moved`, so file moves are always reported.",
+          "explanation": "When the claimed path no longer exists, `findByBasename` searches the git-tracked files (loaded lazily, once per cache) for the same file name. A single hit is accepted. With several hits, it scores each by how many trailing path segments match the original and picks the best only if it shares more than the basename and is not tied. If git is unavailable or the result is ambiguous, it returns null and the location ends up `missing`. A successful match turns an `ok` or `moved` result into `relocated` (a `fuzzy` or `unresolved` result keeps its status), and the note always records `file moved from …`, so file moves are always reported.",
           "path": "src/anchor.js",
           "lineNumber": 85,
           "lineContent": "const alt = cache.findByBasename(relPath);",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "snippet": {
             "startLine": 82,
             "code": "  let file = cache.read(relPath);\n  let relocatedFrom = null;\n  if (!file) {\n    const alt = cache.findByBasename(relPath);\n    if (alt && (file = cache.read(alt))) {\n      relocatedFrom = relPath;\n      relPath = alt;\n    }\n  }\n  if (!file) {\n    return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };\n  }\n\n  const { lines } = file;\n  const wanted = norm(loc.lineContent);\n  const idx0 = Math.min(Math.max(loc.lineNumber - 1, 0), lines.length - 1);\n  let idx = -1;\n  let status = 'unresolved';"
           },
           "ctxHash": "6ea2b704c68a",
-          "narrativeHash": "6ea2b704c68a"
+          "narrativeHash": "6ea2b704c68a",
+          "exec": {
+            "hit": true,
+            "count": 2,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "6ea2b704c68a"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [
+              "fixed: said any successful basename match becomes relocated; only ok/moved become relocated, fuzzy/unresolved keep status (note still records the move)."
+            ],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "6ea2b704c68a",
+            "proseHash": "9ffaf527af4d"
+          }
         },
         {
           "id": "2d",
@@ -255,13 +449,28 @@
           "lineNumber": 101,
           "lineContent": "if (!wanted || norm(lines[idx0]) === wanted) {",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "snippet": {
             "startLine": 98,
             "code": "  let idx = -1;\n  let status = 'unresolved';\n\n  if (!wanted || norm(lines[idx0]) === wanted) {\n    idx = idx0;\n    status = 'ok';\n  } else {\n    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));\n    if (exact.length) {\n      idx = nearest(exact, idx0);\n      status = 'moved';\n    } else {\n      const partial = [];\n      if (wanted.length >= 6) {\n        lines.forEach((l, i) => {\n          const n = norm(l);\n          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);"
           },
           "ctxHash": "e0d62e67aaa5",
-          "narrativeHash": "e0d62e67aaa5"
+          "narrativeHash": "e0d62e67aaa5",
+          "exec": {
+            "hit": true,
+            "count": 10,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "e0d62e67aaa5"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "e0d62e67aaa5",
+            "proseHash": "720986d1f494"
+          }
         },
         {
           "id": "2e",
@@ -272,13 +481,28 @@
           "lineNumber": 107,
           "lineContent": "if (exact.length) {",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "snippet": {
             "startLine": 104,
             "code": "  } else {\n    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));\n    if (exact.length) {\n      idx = nearest(exact, idx0);\n      status = 'moved';\n    } else {\n      const partial = [];\n      if (wanted.length >= 6) {\n        lines.forEach((l, i) => {\n          const n = norm(l);\n          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);\n        });\n      }\n      if (!partial.length && loc.symbol) {\n        const re = new RegExp(`\\\\b${loc.symbol.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\\b`);\n        lines.forEach((l, i) => re.test(l) && partial.push(i));\n      }"
           },
           "ctxHash": "7bea5a0d91b7",
-          "narrativeHash": "7bea5a0d91b7"
+          "narrativeHash": "7bea5a0d91b7",
+          "exec": {
+            "hit": true,
+            "count": 7,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "7bea5a0d91b7"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "7bea5a0d91b7",
+            "proseHash": "cf389168b729"
+          }
         },
         {
           "id": "2f",
@@ -289,31 +513,63 @@
           "lineNumber": 124,
           "lineContent": "status = 'fuzzy';",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "snippet": {
             "startLine": 121,
             "code": "      }\n      if (partial.length) {\n        idx = nearest(partial, idx0);\n        status = 'fuzzy';\n      }\n    }\n  }\n  if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';\n\n  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);\n  const result = {\n    ...loc,\n    path: relPath,\n    lineNumber: anchorIdx + 1,\n    status,\n    fileHash: file.hash,"
           },
           "ctxHash": "9486745b2c6a",
-          "narrativeHash": "9486745b2c6a"
+          "narrativeHash": "9486745b2c6a",
+          "exec": {
+            "hit": false,
+            "count": 0,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "9486745b2c6a"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "9486745b2c6a",
+            "proseHash": "b9f2a38f546c"
+          }
         },
         {
           "id": "2g",
           "title": "safeJoin guard",
           "description": "Resolves repo-relative paths and refuses anything outside the root.",
-          "explanation": "Map paths come from an LLM, or from a shared JSON file, so they must not be able to read arbitrary files. `safeJoin` resolves the path against the root and checks the relative path back: anything starting with `..` or still absolute (for example another drive on Windows) throws. `FileCache.read` calls it inside a `try`, so an escaping path shows up as `missing` instead of an exception. The cache also skips files over 4 MB to avoid loading huge generated artifacts.",
+          "explanation": "Map paths come from an LLM, or from a shared JSON file, so they must not be able to read arbitrary files. `safeJoin` resolves the path against the root and checks the relative path back: anything starting with `..` or still absolute (for example another drive on Windows) throws. `FileCache.read` calls it inside a `try`, so an escaping path is read as `null` instead of throwing; the location then goes through the basename fallback [2c] and normally ends up `missing`. The cache also skips files over 4 MB to avoid loading huge generated artifacts.",
           "path": "src/anchor.js",
           "lineNumber": 13,
           "lineContent": "export function safeJoin(root, rel) {",
           "symbol": "safeJoin",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "snippet": {
             "startLine": 10,
             "code": "const norm = (s) => (s || '').trim().replace(/\\s+/g, ' ');\n\n/** Resolves a repo-relative path, refusing anything that escapes the root. */\nexport function safeJoin(root, rel) {\n  const abs = path.resolve(root, rel);\n  const relBack = path.relative(root, abs);\n  if (relBack.startsWith('..') || path.isAbsolute(relBack)) {\n    throw new Error(`Path \"${rel}\" is outside the repository root`);\n  }\n  return abs;\n}\n\nexport class FileCache {\n  constructor(root) {\n    this.root = root;\n    this.files = new Map();\n    this._tracked = undefined;\n  }"
           },
           "ctxHash": "5429a2d2e5ae",
-          "narrativeHash": "5429a2d2e5ae"
+          "narrativeHash": "5429a2d2e5ae",
+          "exec": {
+            "hit": true,
+            "count": 28,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "5429a2d2e5ae"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [
+              "fixed: said an escaping path always shows up as missing; read returns null and the basename fallback still runs first."
+            ],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "5429a2d2e5ae",
+            "proseHash": "eac5db43448b"
+          }
         }
       ],
       "tree": [
@@ -353,32 +609,56 @@
           ]
         }
       ],
-      "narrativeHash": "513ac3898a23"
+      "narrativeHash": "513ac3898a23",
+      "check": {
+        "verdict": "supported",
+        "issues": [],
+        "at": "2026-10-20T03:50:45.737Z",
+        "checker": "claude-opus-5-5 (waymark fact-checker)",
+        "hash": "513ac3898a23"
+      }
     },
     {
       "id": "3",
       "title": "Reuse: viewer, context and drift",
       "description": "The stored map is consumed by humans (HTML), by agents (markdown resource) and by CI (verify).",
       "motivation": "A map is only worth something if people read it and it stays correct. This trace shows the three ways a stored map is consumed: a human-friendly viewer, agent-friendly context and a CI check. All three work from the same JSON document.",
-      "details": "For humans, [3a] packs the document, the referenced files, a Mermaid diagram and full, per-trace and per-node markdown copies into a single HTML file that can be shared without a server. Inside it, selecting a node [3b] shows that node's code with the anchor line highlighted, focuses it in the diagram and, when embedded in an editor host, tells the host which file and line to reveal.\n\nFor agents, the `waymark://{id}` resource template [3c] lists every map (with id autocompletion) and, when read, returns [3d]'s markdown: header, story, guides, text call tree and numbered snippets per location, with nodes whose code changed since they were explained clearly marked. [3d] can also render a single trace or node, which keeps context small.\n\nFor maintenance, [3e] loads the stored map and re-runs [2b] on every location. It reports status changes, moved lines, files whose hash changed and narrative drift (nodes, traces or the story whose code changed after the prose was written). With `fix`, it writes the corrected anchors and drift list back and regenerates the HTML. `waymark verify --strict` turns the anchor report into a CI failure.",
+      "details": "For humans, [3a] packs the document, the referenced files, an index of the other maps, precomputed per-node check/execution states, a Mermaid diagram and full, per-trace and per-node markdown copies into a single HTML file that can be shared without a server. Inside it, selecting a node [3b] shows that node's code with the anchor line highlighted, focuses it in the diagram and, when embedded in an editor host, tells the host which file and line to reveal.\n\nFor agents, the `waymark://{id}` resource template [3c] lists every map (with id autocompletion) and, when read, returns [3d]'s markdown: header, story, guides, text call tree and numbered snippets per location, with nodes whose code changed since they were explained clearly marked. [3d] can also render a single trace or node, which keeps context small.\n\nFor maintenance, [3e] loads the stored map and re-runs [2b] on every location. It reports status changes, moved lines, files whose hash changed and narrative drift (nodes, traces or the story whose code changed after the prose was written). With `fix`, when something changed, it writes the corrected anchors and drift list back and regenerates the HTML. `waymark verify` exits with an error when anchors are broken, and `--strict` also fails on stale anchors, which turns the report into a CI check.",
       "locations": [
         {
           "id": "3a",
           "title": "renderHtml",
-          "description": "Inlines map, file snapshots, markdown context, CSS and client into one HTML.",
-          "explanation": "This is where a stored map becomes something a human can open with a double-click. `renderHtml` receives the map plus a snapshot of every referenced file (collected by `collectFiles` in the store) and builds a `data` object: the document, the files, the full markdown of the map from [3d], smaller per-trace and per-node markdown blocks for the \"copy as context\" buttons, and a Mermaid source of the diagram. That object, the CSS and the client script from `viewer.client.js` are inlined into a single page. Nothing is fetched at view time, so the file works offline, from an email attachment or from a CI artifact, and it keeps showing the code *as it was* when the map was made. The only escaping that matters is in the JSON island: every `<` is neutralised so a snippet containing `</script>` cannot break out of the data block. Selection itself happens client-side in [3b].",
+          "description": "Inlines map, file snapshots, node states, markdown context, CSS and client into one HTML.",
+          "explanation": "This is where a stored map becomes something a human can open with a double-click. `renderHtml` receives the map, a snapshot of the referenced files (collected by `collectFiles` in the store, which skips binary and oversized files) and a light index of the other maps in the repo (used to resolve links between maps). It builds a `data` object: the document, the files, that map index, a precomputed per-node `states` entry (fact-check verdict validity and execution evidence, which need hashes the browser cannot compute synchronously), the full markdown of the map from [3d], smaller per-trace and per-node markdown blocks for the \"copy as context\" buttons, and a Mermaid source of the diagram. That object, the CSS and the client script from `viewer.client.js` are inlined into a single page. Nothing is fetched at view time, so the file works offline, from an email attachment or from a CI artifact, and it keeps showing the code *as it was* when the viewer was last rendered. The key escaping is in the JSON island: every `<` is neutralised so a snippet containing `</script>` cannot break out of the data block (the inlined client script and the title are escaped separately). Selection itself happens client-side in [3b].",
           "path": "src/render/html.js",
-          "lineNumber": 24,
-          "lineContent": "export function renderHtml(doc, { files = {} } = {}) {",
+          "lineNumber": 25,
+          "lineContent": "export function renderHtml(doc, { files = {}, maps = [] } = {}) {",
           "symbol": "renderHtml",
           "status": "ok",
-          "fileHash": "2939d143d2b9",
+          "fileHash": "8417b34b8047",
           "snippet": {
-            "startLine": 21,
-            "code": " * explanations; code view with embedded files; interactive SVG diagram.\n * `files` is a snapshot { path: content } of the referenced files.\n */\nexport function renderHtml(doc, { files = {} } = {}) {\n  const data = {\n    doc,\n    files,\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    // Smaller context blocks for \"copy trace / node as context\".\n    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),\n    nodeMd: Object.fromEntries(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, renderMarkdown(doc, { node: l.id })]))),\n    mermaid: renderMermaid({ ...doc, diagram: undefined }),\n  };\n  return `<!doctype html>\n<html lang=\"${escHtml(doc.language || 'en')}\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "startLine": 22,
+            "code": " * explanations; code view with embedded files; interactive SVG diagram.\n * `files` is a snapshot { path: content } of the referenced files.\n */\nexport function renderHtml(doc, { files = {}, maps = [] } = {}) {\n  const data = {\n    doc,\n    files,\n    maps,\n    // Precomputed per-node state (fact-check verdict validity needs hashes the browser can't do sync).\n    states: Object.fromEntries(\n      doc.traces.flatMap((t) => t.locations.map((l) => [l.id, { check: checkState(l), exec: execState(l) }])),\n    ),\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    // Smaller context blocks for \"copy trace / node as context\".\n    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),\n    nodeMd: Object.fromEntries(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, renderMarkdown(doc, { node: l.id })]))),\n    mermaid: renderMermaid({ ...doc, diagram: undefined }),\n  };"
           },
-          "ctxHash": "fe95e1cc6e3d",
-          "narrativeHash": "fe95e1cc6e3d"
+          "ctxHash": "0922e822543f",
+          "narrativeHash": "0922e822543f",
+          "exec": {
+            "hit": true,
+            "count": 4,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "0922e822543f"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [
+              "fixed: collectFiles skips binary/oversized files, so not every file is snapshotted; the client script and title are escaped too, not only the JSON island."
+            ],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "0922e822543f",
+            "proseHash": "a65140828ac6"
+          }
         },
         {
           "id": "3b",
@@ -386,17 +666,25 @@
           "description": "One primitive syncs map pane, code view, diagram and an embedding host.",
           "explanation": "`select` is the single navigation primitive of the viewer: every interaction (clicking a card, a `[1a]` reference in a guide, a gutter marker, a diagram node, prev/next or the arrow keys) ends up here. When the viewer runs inside a host such as the VS Code extension, it first posts a `select` message with the node's path and line so the editor can follow, unless the selection came from the host itself or from boot (which avoids echo loops). It then highlights the card in the map pane and opens its trace, and `showInCode` switches the file tab, highlights the anchor line and inserts the inline annotation. If the diagram has been built it also focuses the node and its path and, in diagram view, opens the detail card and pans to it. Finally it writes `#id` to the URL, which makes deep links like `waymark-create-flow.html#2e` shareable. Because all views go through this one function they can never disagree about what is selected.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 951,
+          "lineNumber": 1032,
           "lineContent": "function select(id, opts = {}) {",
           "symbol": "select",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
           "snippet": {
-            "startLine": 948,
+            "startLine": 1029,
             "code": "  }\n\n  // ---------------------------------------------------------------- selection & views\n  function select(id, opts = {}) {\n    const l = byId.get(id);\n    if (!l) return;\n    state.sel = id;\n    if (host && opts.from !== 'host' && opts.from !== 'boot') host.postMessage({ type: 'select', id, path: l.path, line: l.lineNumber });\n    $$('.loc.sel', mapPane).forEach((e) => e.classList.remove('sel'));\n    const card = $('.loc[data-id=\"' + id + '\"]:not(.ref-again)', mapPane);\n    if (card) {\n      card.classList.add('sel');\n      card.closest('.trace').classList.remove('closed');\n      if (opts.from !== 'map') card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });\n    }\n    showInCode(l);\n    if (dg) {\n      const n = focusDiagram(id);"
           },
           "ctxHash": "bfe356e2774e",
-          "narrativeHash": "bfe356e2774e"
+          "narrativeHash": "bfe356e2774e",
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "bfe356e2774e",
+            "proseHash": "4264861e667e"
+          }
         },
         {
           "id": "3c",
@@ -404,16 +692,31 @@
           "description": "waymark://{id} resource: lists maps and serves them as markdown.",
           "explanation": "This resource template makes maps @-mentionable. Its `list` callback lists every stored map with title and description, and `complete` autocompletes ids by prefix. Reading `waymark://<id>` loads the JSON and returns `renderMarkdown` [3d] output as `text/markdown`. It re-reads `.waymark/` on each request, which is why the `resourceListChanged` signal from [1c] is enough to show new maps without server state. It always uses the default root (`rootOf()`), so it serves maps from the server's configured repository.",
           "path": "src/mcp.js",
-          "lineNumber": 347,
+          "lineNumber": 547,
           "lineContent": "server.registerResource(",
           "status": "ok",
-          "fileHash": "8971f8920c9b",
+          "fileHash": "2b0b28761299",
           "snippet": {
-            "startLine": 344,
+            "startLine": 544,
             "code": "  );\n\n  // @-mentionable context: waymark://<id>\n  server.registerResource(\n    'waymark',\n    new ResourceTemplate('waymark://{id}', {\n      list: async () => ({\n        resources: listMaps(rootOf()).map((m) => ({\n          uri: `waymark://${m.id}`,\n          name: m.title,\n          description: m.description,\n          mimeType: 'text/markdown',\n        })),\n      }),\n      complete: { id: (v) => listMaps(rootOf()).map((m) => m.id).filter((i) => i.startsWith(v)) },\n    }),\n    { title: 'Waymark', description: 'A waymark rendered as markdown context', mimeType: 'text/markdown' },\n    async (uri, { id }) => ({"
           },
           "ctxHash": "dd0446b9229a",
-          "narrativeHash": "dd0446b9229a"
+          "narrativeHash": "dd0446b9229a",
+          "exec": {
+            "hit": true,
+            "count": 1,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "dd0446b9229a"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "dd0446b9229a",
+            "proseHash": "1828b0fd1b08"
+          }
         },
         {
           "id": "3d",
@@ -421,17 +724,32 @@
           "description": "Renders a map, one trace or one node as agent-oriented markdown.",
           "explanation": "This is the text an agent actually reads when it loads a map. It writes a header with id, commit, branch, date and the original query. With `node`, it renders just that location with its trace motivation, parent, next steps and links; with `trace`, only that trace plus its cross-trace links. Otherwise it renders the story and every trace: description, motivation and details, an ASCII call tree and one entry per location with title, `path:line`, symbol, description and, at `full` detail, the explanation and a numbered snippet with the anchor line marked `>`. Nodes listed in `meta.narrativeDrift` get a \"code changed since this was explained\" marker, so an agent knows which prose to distrust. `compact` drops narrative and snippets for a cheaper overview. The HTML viewer [3a] embeds the full, per-trace and per-node variants.",
           "path": "src/render/markdown.js",
-          "lineNumber": 85,
+          "lineNumber": 97,
           "lineContent": "export function renderMarkdown(doc, { detail = 'full', diagram = false, trace: traceId = null, node: nodeId = null } = {}) {",
           "symbol": "renderMarkdown",
           "status": "ok",
-          "fileHash": "da30ae573adf",
+          "fileHash": "314557c1859a",
           "snippet": {
-            "startLine": 82,
+            "startLine": 94,
             "code": " * \"compact\" keeps only structure, one-line descriptions and anchors.\n * trace / node: render only that trace, or one node with its trace context.\n */\nexport function renderMarkdown(doc, { detail = 'full', diagram = false, trace: traceId = null, node: nodeId = null } = {}) {\n  const o = [];\n  const full = detail === 'full';\n  const staleNodes = new Set(doc.meta?.narrativeDrift?.nodes || []);\n  header(doc, o);\n\n  if (nodeId) {\n    const trace = doc.traces.find((t) => t.locations.some((l) => l.id === nodeId));\n    if (!trace) throw new Error(`Node \"${nodeId}\" not found in ${doc.id}`);\n    const loc = trace.locations.find((l) => l.id === nodeId);\n    const byId = new Map(trace.locations.map((l) => [l.id, l]));\n    const label = (n) => (n.ref && byId.get(n.ref) ? `[${n.ref}] ${byId.get(n.ref).title}` : n.label || '(group)');\n    o.push('', `## Trace ${trace.id}: ${trace.title}`, '', trace.description);\n    if (full && trace.motivation) o.push('', '### Motivation', '', trace.motivation);\n    o.push('', `## Node [${loc.id}]`, '');"
           },
           "ctxHash": "9692858d7e00",
-          "narrativeHash": "9692858d7e00"
+          "narrativeHash": "9692858d7e00",
+          "exec": {
+            "hit": true,
+            "count": 22,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "9692858d7e00"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "9692858d7e00",
+            "proseHash": "540a2578f0cb"
+          }
         },
         {
           "id": "3e",
@@ -449,7 +767,22 @@
             "code": " * With fix=true, corrected line numbers/snippets/context hashes are written back\n * (narrative baselines are kept, so drifted prose stays flagged until it is rewritten).\n */\nexport function verifyMap(root, id, { fix = false } = {}) {\n  const doc = loadMap(root, id);\n  const cache = new FileCache(root);\n  const changes = [];\n  const changedFiles = new Set();\n  const counts = { ok: 0, moved: 0, fuzzy: 0, relocated: 0, unresolved: 0, missing: 0 };\n  let ctxChanged = false;\n\n  const fresh = { ...doc, traces: [] };\n  for (const trace of doc.traces) {\n    const results = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      counts[r.status]++;\n      if (loc.fileHash && r.fileHash && loc.fileHash !== r.fileHash) changedFiles.add(r.path);\n      if (r.ctxHash !== loc.ctxHash) ctxChanged = true;"
           },
           "ctxHash": "471a1a97a020",
-          "narrativeHash": "471a1a97a020"
+          "narrativeHash": "471a1a97a020",
+          "exec": {
+            "hit": true,
+            "count": 4,
+            "at": "2026-10-20T03:13:29.628Z",
+            "source": "v8",
+            "ctxHash": "471a1a97a020"
+          },
+          "check": {
+            "verdict": "supported",
+            "issues": [],
+            "at": "2026-10-20T03:50:45.737Z",
+            "checker": "claude-opus-5-5 (waymark fact-checker)",
+            "ctxHash": "471a1a97a020",
+            "proseHash": "ad76d3469019"
+          }
         }
       ],
       "tree": [
@@ -488,14 +821,23 @@
           ]
         }
       ],
-      "narrativeHash": "97ba9f752e12"
+      "narrativeHash": "9e0d07e8332d",
+      "check": {
+        "verdict": "supported",
+        "issues": [
+          "fixed: said --strict turns the report into a CI failure; plain verify already exits 1 on broken anchors, --strict adds stale ones. verify --fix writes only when something changed."
+        ],
+        "at": "2026-10-20T03:50:45.737Z",
+        "checker": "claude-opus-5-5 (waymark fact-checker)",
+        "hash": "9e0d07e8332d"
+      }
     }
   ],
   "links": [
     {
       "from": "1f",
       "to": "2a",
-      "label": "anchorWaymark map(root, map)"
+      "label": "anchorMap(root, map)"
     },
     {
       "from": "1h",
@@ -514,9 +856,9 @@
   ],
   "meta": {
     "createdAt": "2026-10-01T16:36:38.822Z",
-    "updatedAt": "2026-10-20T02:27:22.896Z",
+    "updatedAt": "2026-10-20T03:51:35.135Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "980a6c9d5e9f426c94f8630370d43c03fbc72c4a",
+    "commit": "9fce4e38f8797d3e72d7948c3f5e3646a2783d12",
     "branch": "main",
     "remote": "https://github.com/h0w4r/waymark",
     "anchors": {
@@ -527,7 +869,31 @@
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-20T02:46:17.107Z"
+    "verifiedAt": "2026-10-20T04:02:58.142Z",
+    "exec": {
+      "hit": 18,
+      "miss": 1,
+      "unknown": 1,
+      "at": "2026-10-20T03:13:29.628Z",
+      "source": "v8",
+      "command": "node --test test/waymark.test.js"
+    },
+    "check": {
+      "supported": 18,
+      "partial": 2,
+      "unsupported": 0,
+      "unchecked": 0,
+      "stale": 0,
+      "total": 20
+    }
   },
-  "narrativeHash": "b535b75d1c4a"
+  "narrativeHash": "e9e4d75e90d5",
+  "storyCheck": {
+    "verdict": "supported",
+    "issues": [
+      "fixed: said saveMap is the only path that writes maps to disk; annotate/note/check/verify --fix also persist via persist()."
+    ],
+    "at": "2026-10-20T03:50:45.737Z",
+    "checker": "claude-opus-5-5 (waymark fact-checker)"
+  }
 }

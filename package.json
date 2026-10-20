@@ -1,15 +1,16 @@
 {
-  "name": "waymark",
-  "version": "0.2.0",
+  "name": "@h0w4r/waymark",
+  "version": "0.3.0",
   "description": "Hierarchical, line-anchored maps of how code executes — MCP server, CLI and shareable HTML viewer for agentic harnesses",
   "main": "src/mcp.js",
   "scripts": {
-    "test": "node --test test/waymark.test.js test/narrative.test.js test/agentic.test.js test/vscode.test.js",
+    "test": "node --test test/waymark.test.js test/narrative.test.js test/agentic.test.js test/vscode.test.js test/features.test.js",
     "mcp": "node src/mcp.js",
-    "vscode:package": "cd vscode && npx --yes @vscode/vsce@latest package --no-dependencies",
+    "vscode:package": "npm run build && cd vscode && npx --yes @vscode/vsce@latest package --no-dependencies",
     "vscode:install": "node src/cli.js install --no-claude --no-codex --no-agents-md --vscode",
     "version:set": "node scripts/set-version.mjs",
-    "update": "node src/cli.js update --claude-global --vscode"
+    "update": "node src/cli.js update --claude-global --vscode",
+    "build": "node scripts/build.mjs"
   },
   "keywords": [
     "mcp",
@@ -34,11 +35,9 @@
   },
   "files": [
     "src",
-    "vscode/extension.js",
-    "vscode/lib",
-    "vscode/media",
-    "vscode/package.json",
-    "vscode/README.md"
+    "scripts/build.mjs",
+    "README.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"
@@ -50,5 +49,11 @@
   "homepage": "https://github.com/h0w4r/waymark#readme",
   "bugs": {
     "url": "https://github.com/h0w4r/waymark/issues"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

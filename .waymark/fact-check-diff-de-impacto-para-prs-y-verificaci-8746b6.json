@@ -1,0 +1,1587 @@
+{
+  "schemaVersion": 1,
+  "id": "fact-check-diff-de-impacto-para-prs-y-verificaci-8746b6",
+  "title": "Fact-check, diff de impacto para PRs y verificación por cobertura en Waymark",
+  "description": "Waymark tiene tres formas de comprobar que un mapa sigue siendo fiel al código. La primera es un fact-check hecho por un agente escéptico: arranca con `waymark check` [1a] o con la tool `waymark_check` [1g] y sus veredictos se sellan con huellas en `recordCheck` [2c]. La segunda es un diff de impacto: `diffMaps` [3a] cruza las líneas de `git diff` con el bloque de cada nodo, `renderDiff` [4a] arma el reporte y una GitHub Action lo publica como comentario en el PR [4m]. La tercera es la verificación por ejecución, que pasa la cobertura V8/lcov a marcas hit/miss por nodo [5g] [5h].",
+  "story": "**El problema.** Un mapa de Waymark cuenta con prosa cómo se ejecuta el código, y esa prosa puede ser falsa desde el principio o quedarse vieja cuando cambia el código. Además, nadie sabe a priori si esos caminos se ejecutan de verdad. Waymark ataca el problema por tres frentes: un humano o agente que contrasta lo que dice el mapa, el impacto de cada change set y la cobertura real de los tests.\n\n**El recorrido.**\n\n1. **Fact-check: la entrada (traza 1).** `waymark check <id>` [1a] lanza un agente headless [1b] [1c] con el procedimiento de `checkGuide` [1d], que termina pidiendo veredictos [1e]. El agente empieza llamando a `waymark_check` [1f], que le entrega la guía junto con el mapa completo en markdown [1g] [1h], con explicaciones [1i] y snippets numerados [1j] para contrastar cada afirmación con el código.\n2. **Fact-check: los veredictos (traza 2).** El verificador responde con `waymark_record_check` [2a]. `recordCheck` primero refresca los ctxHash [2b] y después sella cada veredicto con dos huellas: la del código (`ctxHash`) y la de la prosa (`proseHash` [2h]) [2c] [2d]. `checkState` [2g] marca como *stale* cualquier veredicto cuyas huellas ya no coinciden. Ese estado derivado alimenta el resumen [2f], el lint [2j], las marcas del markdown [2k] y el HTML [2l]. Al terminar, la CLI imprime ese resumen [1k].\n3. **Diff de impacto (traza 3).** `diffMaps` [3a] ejecuta `git diff --unified=0` [3c] y parsea los hunks [3d], incluidos los borrados puros [3e]. Para cada nodo calcula el bloque de código que narra [3f] con `contextRange`/`contextIndices` [3g] [3h] y lo cruza con las líneas cambiadas [3i]. Después suma las anclas rotas y la deriva narrativa que detecta `verifyMap` [3j], descarta los mapas sanos [3k] y devuelve el reporte [3l].\n4. **Diff en PRs (traza 4).** `renderDiff` [4a] convierte ese reporte en markdown: una tabla de nodos tocados [4c], las anclas rotas [4d], la prosa por revisar [4e] y la sugerencia de refresh [4f]. El mismo reporte sale por tres canales: la CLI, con salida markdown o JSON y `--fail-on` para romper el build [4g]–[4i]; la tool MCP `waymark_diff` [4j] [4k]; y la GitHub Action, que ejecuta `diff --range` [4l] y comenta en el PR [4m].\n5. **Verificación por ejecución (traza 5).** `waymark exec` [5a] o `waymark_exec` [5b] reciben la cobertura, sea como lcov [5c] o como un comando ejecutado con `NODE_V8_COVERAGE` [5d] [5e]. `applyCoverage` [5f] decide hit o miss por línea ancla [5g] y `recordExec` [5h] lo persiste junto al ctxHash. `execState` [5i] aplica la misma regla de caducidad que `checkState`, y su resultado llega al HTML [5j], al visor [5k] y a la extensión de VS Code [5l].\n\n**Cómo se conectan.** Todo gira alrededor de la huella del bloque de código de cada nodo. El fact-check y la cobertura atan sus resultados al `ctxHash` [2c] [5h], y por eso un cambio en el código los vuelve *stale* sin intervención [2g] [5i]. El diff usa la misma noción de bloque [3f] para avisar *antes* del merge qué nodos y veredictos van a caducar. El HTML calcula ambos estados en el mismo punto [2l] [5j].\n\n**Takeaways.**\n- Un veredicto o una marca de ejecución solo valen mientras coincidan las huellas del código (y de la prosa, en el caso del check). Nada se invalida a mano.\n- `diffMaps` [3a] es la única fuente del impacto, y la CLI, el MCP y la Action solo cambian el formato y el destino.\n- El fact-check lo hace un agente externo. Waymark le da el guion [1d] y el material [1g], y se limita a guardar y derivar los estados [2a]–[2g].",
+  "language": "es",
+  "query": "¿Cómo funcionan en Waymark la verificación de afirmaciones (fact-check), el análisis de impacto de cambios para PRs (diff) y la verificación por ejecución con cobertura?",
+  "traces": [
+    {
+      "id": "1",
+      "title": "Fact-check: procedimiento y entrada (CLI check / MCP waymark_check)",
+      "description": "Cómo `waymark check` o la tool MCP `waymark_check` entregan a un verificador escéptico el procedimiento y el mapa completo a contrastar con el código.",
+      "diagramTitle": "Arranque de un fact-check",
+      "motivation": "Un mapa de Waymark es prosa escrita por un agente, y la prosa puede afirmar cosas que el código no hace. El fact-check existe para que un segundo agente, que **no** escribió el mapa, revise cada afirmación contra el código real. Para que eso funcione hacen falta dos cosas: un procedimiento claro y estricto (qué verificar, cómo corregir, cómo emitir veredictos) y el mapa entero en un formato que un agente lea bien, con narrativa y fragmentos de código. Esta traza muestra cómo se arma ese paquete, tanto desde la CLI como desde el servidor MCP.",
+      "details": "Todo empieza en la CLI: el despachador de comandos enruta `waymark check <id>` a la función `check` [1a]. Esta carga el mapa y lanza un agente headless con el texto de `checkGuide` más la instrucción de empezar llamando a `waymark_check` [1b]. `runAgent` envuelve esa tarea con la raíz del repo y la restricción de herramientas de solo lectura y arranca Claude Code o Codex como proceso hijo [1c].\n\nEl contenido de la tarea lo define `checkGuide` [1d]: presenta al agente como un fact-checker que no escribió el mapa y le da un procedimiento paso a paso, cuyo punto culminante es registrar veredictos `supported` / `partial` / `unsupported` con `waymark_record_check` [1e].\n\nYa dentro del agente, la primera llamada es a la tool MCP `waymark_check` [1f], de solo lectura. Su handler concatena de nuevo el procedimiento con el mapa renderizado en markdown con `detail: 'full'` [1g]. `renderMarkdown` [1h] arma la cabecera y recorre cada traza; por cada ubicación incluye la explicación narrativa [1i] y el fragmento de código numerado, marcando con `>` la línea anclada [1j]. Con eso el verificador tiene todo lo necesario para contrastar.\n\nLa traza termina cuando el verificador llama a `waymark_record_check`. Desde la CLI, cuando el agente termina, `check` vuelve a cargar el mapa y muestra el resumen con `checkSummary` [1k]; cómo se guardan y evalúan esos veredictos es tema de la traza 2.",
+      "locations": [
+        {
+          "id": "1a",
+          "title": "Comando CLI check",
+          "description": "El despachador de la CLI enruta `waymark check <id>` a la función check.",
+          "explanation": "Es la puerta de entrada humana al fact-check: el usuario escribe `waymark check <id>` y el `switch` del CLI llega a este caso. Solo pasa el primer argumento posicional (el id del mapa) a `check`, que hace todo el trabajo [1b]. Opciones como `--engine` o `--open` se leen después desde el objeto global `opt`. Si falta el id, `check` lanza un error con el uso correcto.",
+          "path": "src/cli.js",
+          "lineNumber": 336,
+          "lineContent": "case 'check':",
+          "symbol": "main",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "d615965d168b",
+          "snippet": {
+            "startLine": 333,
+            "code": "        }),\n      );\n    }\n    case 'check':\n      return check(rest[0]);\n    case 'note': {\n      if (!rest[0] || !rest[1]) throw new Error('Usage: waymark note <id> <node> \"<text>\" [--author <name>] [--remove <index>]');\n      const res = noteMap(root(), rest[0], rest[1], { text: rest.slice(2).join(' '), author: opt.author, remove: opt.remove != null ? Number(opt.remove) : null });\n      return out(`✔ ${res.id} [${res.node}]: ${res.notes.length} note(s)`);\n    }\n    case 'notes': {\n      const doc = loadMap(root(), rest[0]);\n      for (const t of doc.traces) for (const l of t.locations) (l.notes || []).forEach((n, i) => out(`[${l.id}] #${i} ${n.author} ${String(n.at).slice(0, 10)}: ${n.text}`));\n      return;\n    }\n    case 'diff': {\n      const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });\n      out(opt.format === 'json' ? rep : renderDiff(rep));"
+          },
+          "narrativeHash": "d615965d168b"
+        },
+        {
+          "id": "1b",
+          "title": "Lanza el agente verificador",
+          "description": "Carga el mapa y ejecuta un agente con checkGuide y la orden de llamar waymark_check.",
+          "explanation": "Aquí la CLI delega el trabajo a un agente nuevo. Primero `loadMap` valida que el mapa exista y obtiene su id canónico; luego construye la tarea con el procedimiento de `checkGuide` [1d] y le añade una instrucción concreta: empezar llamando a `waymark_check` [1f] para recibir el mapa con sus fragmentos. Que el agente sea nuevo es intencional: así no es quien escribió el mapa. La etiqueta `fact-check` solo sirve para el mensaje de progreso que imprime `runAgent` [1c].",
+          "path": "src/cli.js",
+          "lineNumber": 256,
+          "lineContent": "const code = await runAgent(r, checkGuide(doc.id) + '\\n\\nStart by calling waymark_check(id: \"' + doc.id + '\") to get the map with its code snippets.', { label: 'fact-check' });",
+          "symbol": "check",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "2385339ac1db",
+          "snippet": {
+            "startLine": 253,
+            "code": "  if (!id) throw new Error('Usage: waymark check <id> [--engine claude|codex]');\n  const r = root();\n  const doc = loadMap(r, id);\n  const code = await runAgent(r, checkGuide(doc.id) + '\\n\\nStart by calling waymark_check(id: \"' + doc.id + '\") to get the map with its code snippets.', { label: 'fact-check' });\n  const s = checkSummary(loadMap(r, doc.id));\n  out(`\\nwaymark: ${doc.id} fact-check → ${s.supported} supported, ${s.partial} partial, ${s.unsupported} unsupported, ${s.unchecked + s.stale} unchecked (of ${s.total})`);\n  if (opt.open) openFile(path.join(mapDir(r), `${doc.id}.html`));\n  process.exitCode = code || (s.unsupported ? 1 : 0);\n}\n\nasync function enrich(id) {\n  if (!id) throw new Error('Usage: waymark enrich <id> [--engine claude|codex]');\n  const r = root();\n  const doc = loadMap(r, id);\n  const code = await runAgent(r, enrichGuide(doc.id));\n  const gaps = narrativeGaps(loadMap(r, doc.id));\n  const html = path.join(mapDir(r), `${doc.id}.html`);\n  out(`\\nwaymark: ${doc.id}  narrative ${gaps.complete ? 'complete' : 'still incomplete: ' + JSON.stringify(gaps)}\\nhtml: ${html}`);"
+          },
+          "narrativeHash": "2385339ac1db"
+        },
+        {
+          "id": "1c",
+          "title": "runAgent arranca el proceso",
+          "description": "Ejecuta Claude Code o Codex headless con herramientas de lectura y el MCP de waymark.",
+          "explanation": "`runAgent` elige el motor (Claude o Codex), añade a la tarea la raíz del repo, la indicación de trabajar en autónomo con herramientas de solo lectura y la obligación de pasar `root` a las tools de waymark. Después lanza el binario como proceso hijo con `spawn`, con cwd en el repo y la salida heredada por la terminal (o redirigida a un log). La promesa se resuelve con el código de salida del proceso, que `check` usa después para decidir el código de salida [1k]. Si el binario no está en el PATH, falla antes con un mensaje claro.",
+          "path": "src/cli.js",
+          "lineNumber": 190,
+          "lineContent": "const p = spawn(inv.bin.command, [...inv.bin.args, ...inv.args], {",
+          "symbol": "runAgent",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "c64b4a4374fd",
+          "snippet": {
+            "startLine": 187,
+            "code": "  out(`waymark: running ${engine}${label ? ' — ' + label : ''}…`);\n  const fd = log ? fs.openSync(log, 'w') : null;\n  const code = await new Promise((res, rej) => {\n    const p = spawn(inv.bin.command, [...inv.bin.args, ...inv.args], {\n      cwd: r,\n      stdio: [inv.stdin ? 'pipe' : 'ignore', fd ?? 'inherit', fd ?? 'inherit'],\n      shell: !!inv.bin.shell,\n    });\n    p.on('error', (e) => rej(new Error(`Could not run ${engine}: ${e.message}`)));\n    p.on('close', res);\n    if (inv.stdin) p.stdin.end(inv.stdin);\n  }).finally(() => {\n    inv.cleanup();\n    if (fd != null) fs.closeSync(fd);\n  });\n  return code ?? 1;\n}\n"
+          },
+          "narrativeHash": "c64b4a4374fd"
+        },
+        {
+          "id": "1d",
+          "title": "checkGuide: rol del verificador",
+          "description": "Genera el procedimiento del fact-checker escéptico para un mapa concreto.",
+          "explanation": "Esta función es el \"guion\" del verificador y la comparten la CLI [1b] y el MCP [1g], así que ambos caminos dan exactamente las mismas instrucciones. Empieza recordando al agente que *no* escribió el mapa y que su trabajo es encontrar lo que está mal. Le pide trabajar en solo lectura y, por cada ubicación, abrir el código, listar las afirmaciones concretas (quién llama a quién, datos, condiciones, \"siempre/nunca\") y verificarlas. Si una afirmación es incorrecta, primero debe corregir la prosa con `waymark_annotate` y luego juzgar el texto corregido.",
+          "path": "src/procedures.js",
+          "lineNumber": 8,
+          "lineContent": "export function checkGuide(id) {",
+          "symbol": "checkGuide",
+          "status": "ok",
+          "fileHash": "63deef8997ec",
+          "ctxHash": "c611b5c06274",
+          "snippet": {
+            "startLine": 5,
+            "code": "  'Prose is storytelling for a new teammate, in the language of the query; cite nodes as [1a]. Every anchored node must be a line you actually read (read-only exploration).';\n\n/** Skeptical verifier: checks every claim against the code and records verdicts. */\nexport function checkGuide(id) {\n  return `You are the **Waymark fact-checker** for map \\`${id}\\`. You did NOT write this map; your job is to find what is wrong with it.\n\nWork read-only. For each location (and then each trace guide and the story):\n\n1. Open the code around the anchor (the map below has snippets; read more of the file when needed).\n2. List the concrete claims in its \\`description\\` and \\`explanation\\`: what calls what, what data is passed or returned, conditions and branches, side effects, numbers, names, ordering, \"only/always/never\" statements.\n3. Verify each claim against the code you read. A claim about runtime behaviour you cannot see in code (performance, external services) is *unverifiable*.\n4. If a claim is **wrong**, fix the prose first with \\`waymark_annotate\\` (keep the style and language), then judge the corrected text.\n5. Record verdicts with \\`waymark_record_check\\`:\n   - \\`supported\\` — every claim is backed by code you read;\n   - \\`partial\\` — something is unverifiable or imprecise (say what in \\`issues\\`);\n   - \\`unsupported\\` — a claim is wrong and you could not fix it (say why).\n   Be strict: when unsure, use \\`partial\\`. Put each problem in \\`issues\\` as one short sentence (\"fixed: said X, code does Y\" for corrections).\n6. Check every trace's motivation/details and the story the same way (\\`traces\\` and \\`story\\` in \\`waymark_record_check\\`)."
+          },
+          "narrativeHash": "c611b5c06274"
+        },
+        {
+          "id": "1e",
+          "title": "Paso: registrar veredictos",
+          "description": "El procedimiento termina pidiendo veredictos con waymark_record_check.",
+          "explanation": "Este es el punto final de la traza: el verificador debe convertir su revisión en veredictos llamando a `waymark_record_check`. Las tres opciones son `supported` (todo respaldado por código leído), `partial` (algo no verificable o impreciso) y `unsupported` (algo falso que no pudo corregir). La guía pide ser estricto y usar `partial` ante la duda, con cada problema en `issues` como una frase corta. El paso 6 extiende lo mismo a la motivación/detalles de cada traza y a la historia; qué hace el sistema con estos veredictos ya es la traza 2.",
+          "path": "src/procedures.js",
+          "lineNumber": 17,
+          "lineContent": "5. Record verdicts with \\`waymark_record_check\\`:",
+          "symbol": "checkGuide",
+          "status": "ok",
+          "fileHash": "63deef8997ec",
+          "ctxHash": "bbba197d8e79",
+          "snippet": {
+            "startLine": 14,
+            "code": "2. List the concrete claims in its \\`description\\` and \\`explanation\\`: what calls what, what data is passed or returned, conditions and branches, side effects, numbers, names, ordering, \"only/always/never\" statements.\n3. Verify each claim against the code you read. A claim about runtime behaviour you cannot see in code (performance, external services) is *unverifiable*.\n4. If a claim is **wrong**, fix the prose first with \\`waymark_annotate\\` (keep the style and language), then judge the corrected text.\n5. Record verdicts with \\`waymark_record_check\\`:\n   - \\`supported\\` — every claim is backed by code you read;\n   - \\`partial\\` — something is unverifiable or imprecise (say what in \\`issues\\`);\n   - \\`unsupported\\` — a claim is wrong and you could not fix it (say why).\n   Be strict: when unsure, use \\`partial\\`. Put each problem in \\`issues\\` as one short sentence (\"fixed: said X, code does Y\" for corrections).\n6. Check every trace's motivation/details and the story the same way (\\`traces\\` and \\`story\\` in \\`waymark_record_check\\`).\n\nFinish with a summary: how many nodes supported / partial / unsupported and the main corrections you made.`;\n}\n\n/** Phase 1 of parallel generation: plan the traces quickly, without deep exploration. */\nexport function planGuide(query, { mode = 'smart', kind = 'flow' } = {}) {\n  return `You are the **Waymark planner**. Plan a map for:\n\n> ${query}"
+          },
+          "narrativeHash": "bbba197d8e79"
+        },
+        {
+          "id": "1f",
+          "title": "Tool MCP waymark_check",
+          "description": "Registra la tool de solo lectura que entrega procedimiento y mapa.",
+          "explanation": "Es la entrada agéntica al fact-check: cualquier cliente MCP (o el agente que lanzó la CLI en [1b]) puede pedirla con un `id` y una `root` opcional. Está marcada con `readOnlyHint`, porque solo lee el mapa: no modifica nada. Su descripción ya explica el flujo esperado (verificar, corregir con `waymark_annotate`, registrar con `waymark_record_check`) y recomienda que la use un agente distinto del autor. El trabajo real está en el handler [1g].",
+          "path": "src/mcp.js",
+          "lineNumber": 315,
+          "lineContent": "'waymark_check',",
+          "status": "ok",
+          "fileHash": "2b0b28761299",
+          "ctxHash": "dc3a48baaa10",
+          "snippet": {
+            "startLine": 312,
+            "code": "\n  // ---------------- fact-checking\n  server.registerTool(\n    'waymark_check',\n    {\n      title: 'Fact-check a map',\n      description:\n        'Returns the fact-checking procedure for a map plus the full map (prose + code snippets). A skeptical verifier checks every claim against the code, fixes wrong prose with waymark_annotate and records verdicts with waymark_record_check. Best run by a fresh agent/subagent that did not write the map.',\n      inputSchema: { id: z.string(), root: rootArg },\n      annotations: { readOnlyHint: true },\n    },\n    safe(async ({ id, root }) => {\n      const doc = loadMap(rootOf(root), id);\n      return text(checkGuide(doc.id) + '\\n\\n## Map to check\\n\\n' + renderMarkdown(doc, { detail: 'full' }));\n    }),\n  );\n\n  const verdict = z.enum(['supported', 'partial', 'unsupported']);"
+          },
+          "narrativeHash": "dc3a48baaa10"
+        },
+        {
+          "id": "1g",
+          "title": "Une guía y mapa completo",
+          "description": "Devuelve checkGuide más el mapa en markdown con detail full.",
+          "explanation": "El handler carga el mapa con la raíz resuelta y responde con un único texto: el procedimiento de [1d] seguido de una sección `## Map to check` con el mapa renderizado [1h]. Usar `detail: 'full'` es clave: el modo compacto omitiría las explicaciones y los fragmentos de código, justo lo que hay que verificar. Por eso, aunque la CLI ya incluyó la guía en el prompt, el agente la recibe otra vez junto al material, lo que hace que la tool funcione sola desde cualquier cliente MCP.",
+          "path": "src/mcp.js",
+          "lineNumber": 325,
+          "lineContent": "return text(checkGuide(doc.id) + '\\n\\n## Map to check\\n\\n' + renderMarkdown(doc, { detail: 'full' }));",
+          "status": "ok",
+          "fileHash": "2b0b28761299",
+          "ctxHash": "13ccbcf281d9",
+          "snippet": {
+            "startLine": 322,
+            "code": "    },\n    safe(async ({ id, root }) => {\n      const doc = loadMap(rootOf(root), id);\n      return text(checkGuide(doc.id) + '\\n\\n## Map to check\\n\\n' + renderMarkdown(doc, { detail: 'full' }));\n    }),\n  );\n\n  const verdict = z.enum(['supported', 'partial', 'unsupported']);\n  server.registerTool(\n    'waymark_record_check',\n    {\n      title: 'Record fact-check verdicts',\n      description:\n        'Stores fact-check verdicts. A verdict stays valid while the node\\'s code block and prose are unchanged; it becomes \"stale\" otherwise. unsupported verdicts are lint errors.',\n      inputSchema: {\n        id: z.string(),\n        nodes: z.array(z.object({ id: z.string(), verdict, issues: z.array(z.string()).optional() })).optional(),\n        traces: z.array(z.object({ id: z.string(), verdict, issues: z.array(z.string()).optional() })).optional(),"
+          },
+          "narrativeHash": "13ccbcf281d9"
+        },
+        {
+          "id": "1h",
+          "title": "renderMarkdown",
+          "description": "Renderiza el mapa como markdown para agentes, completo o compacto.",
+          "explanation": "Es el mismo renderizador que usa el recurso `waymark://`, pero aquí se invoca para el mapa entero (sin `trace` ni `node`). Escribe la cabecera con id, commit y query; si es `full`, añade la historia; y después recorre cada traza con `renderTrace`, que incluye descripción, motivación, detalles y el árbol en ASCII. Por cada ubicación llama a `renderLoc`, que es donde se agregan las explicaciones [1i] y el código [1j]. También marca los nodos con deriva narrativa, para que el verificador sepa que el código cambió desde que se escribió la prosa.",
+          "path": "src/render/markdown.js",
+          "lineNumber": 97,
+          "lineContent": "export function renderMarkdown(doc, { detail = 'full', diagram = false, trace: traceId = null, node: nodeId = null } = {}) {",
+          "symbol": "renderMarkdown",
+          "status": "ok",
+          "fileHash": "314557c1859a",
+          "ctxHash": "9692858d7e00",
+          "snippet": {
+            "startLine": 94,
+            "code": " * \"compact\" keeps only structure, one-line descriptions and anchors.\n * trace / node: render only that trace, or one node with its trace context.\n */\nexport function renderMarkdown(doc, { detail = 'full', diagram = false, trace: traceId = null, node: nodeId = null } = {}) {\n  const o = [];\n  const full = detail === 'full';\n  const staleNodes = new Set(doc.meta?.narrativeDrift?.nodes || []);\n  header(doc, o);\n\n  if (nodeId) {\n    const trace = doc.traces.find((t) => t.locations.some((l) => l.id === nodeId));\n    if (!trace) throw new Error(`Node \"${nodeId}\" not found in ${doc.id}`);\n    const loc = trace.locations.find((l) => l.id === nodeId);\n    const byId = new Map(trace.locations.map((l) => [l.id, l]));\n    const label = (n) => (n.ref && byId.get(n.ref) ? `[${n.ref}] ${byId.get(n.ref).title}` : n.label || '(group)');\n    o.push('', `## Trace ${trace.id}: ${trace.title}`, '', trace.description);\n    if (full && trace.motivation) o.push('', '### Motivation', '', trace.motivation);\n    o.push('', `## Node [${loc.id}]`, '');"
+          },
+          "narrativeHash": "9692858d7e00"
+        },
+        {
+          "id": "1i",
+          "title": "Incluye la explicación",
+          "description": "En modo completo añade la explicación narrativa de cada nodo.",
+          "explanation": "Las explicaciones concentran la mayoría de las afirmaciones que el verificador debe comprobar, así que solo se incluyen en modo `full`. El `replace` sangra cada línea para que quede dentro del elemento de lista del nodo. Justo antes, `renderLoc` ya añadió las marcas de estado (por ejemplo, veredictos anteriores o la cobertura de tests), que también le sirven al verificador como contexto.",
+          "path": "src/render/markdown.js",
+          "lineNumber": 50,
+          "lineContent": "if (full && loc.explanation) o.push(`  ${loc.explanation.replace(/\\n/g, '\\n  ')}`);",
+          "symbol": "renderLoc",
+          "status": "ok",
+          "fileHash": "314557c1859a",
+          "ctxHash": "68ce7c33fc70",
+          "snippet": {
+            "startLine": 47,
+            "code": "  else if (es === 'miss') flags.push('○ not executed by the tests');\n  if (loc.mapRef) flags.push(`→ detailed map: waymark://${loc.mapRef.replace('#', '/')}`);\n  if (flags.length) o.push(`  _${flags.join(' · ')}_`);\n  if (full && loc.explanation) o.push(`  ${loc.explanation.replace(/\\n/g, '\\n  ')}`);\n  for (const n of loc.notes || []) o.push(`  > 📝 Team note (${n.author}, ${String(n.at).slice(0, 10)}): ${n.text}`);\n  if (full && loc.snippet?.code) {\n    const numbered = loc.snippet.code\n      .split('\\n')\n      .map((l, i) => {\n        const n = loc.snippet.startLine + i;\n        return `${n === loc.lineNumber ? '>' : ' '}${String(n).padStart(5)}  ${l}`;\n      })\n      .join('\\n');\n    o.push('  ```', numbered.replace(/^/gm, '  '), '  ```');\n  } else if (loc.lineContent) {\n    o.push(`  \\`${loc.lineContent}\\``);\n  }\n}"
+          },
+          "narrativeHash": "68ce7c33fc70"
+        },
+        {
+          "id": "1j",
+          "title": "Fragmento de código numerado",
+          "description": "Imprime el snippet con números de línea y marca la línea anclada con >.",
+          "explanation": "Este es el \"material probatorio\" que el verificador tiene a mano: el fragmento de código guardado en el mapa, con cada línea numerada a partir de `snippet.startLine`. La línea anclada se marca con `>` para que se vea exactamente a qué apunta el nodo. Si no hay snippet, se cae al `lineContent` en una sola línea. La guía [1d] aclara que el verificador puede leer más del archivo si el fragmento no alcanza.",
+          "path": "src/render/markdown.js",
+          "lineNumber": 52,
+          "lineContent": "if (full && loc.snippet?.code) {",
+          "symbol": "renderLoc",
+          "status": "ok",
+          "fileHash": "314557c1859a",
+          "ctxHash": "2024c495d214",
+          "snippet": {
+            "startLine": 49,
+            "code": "  if (flags.length) o.push(`  _${flags.join(' · ')}_`);\n  if (full && loc.explanation) o.push(`  ${loc.explanation.replace(/\\n/g, '\\n  ')}`);\n  for (const n of loc.notes || []) o.push(`  > 📝 Team note (${n.author}, ${String(n.at).slice(0, 10)}): ${n.text}`);\n  if (full && loc.snippet?.code) {\n    const numbered = loc.snippet.code\n      .split('\\n')\n      .map((l, i) => {\n        const n = loc.snippet.startLine + i;\n        return `${n === loc.lineNumber ? '>' : ' '}${String(n).padStart(5)}  ${l}`;\n      })\n      .join('\\n');\n    o.push('  ```', numbered.replace(/^/gm, '  '), '  ```');\n  } else if (loc.lineContent) {\n    o.push(`  \\`${loc.lineContent}\\``);\n  }\n}\n\nfunction renderTrace(trace, o, full, staleNodes) {"
+          },
+          "narrativeHash": "2024c495d214"
+        },
+        {
+          "id": "1k",
+          "title": "Resumen tras el agente",
+          "description": "Al terminar el agente, la CLI recarga el mapa e imprime el resumen de veredictos.",
+          "explanation": "Cuando el proceso del agente [1c] termina, la CLI vuelve a leer el mapa del disco, porque el agente lo modificó a través de las tools MCP. `checkSummary` cuenta los nodos `supported`, `partial`, `unsupported` y los no verificados (o `stale`), y la línea siguiente imprime ese resumen. El código de salida combina el del agente con la presencia de `unsupported`, lo que permite usar `waymark check` como puerta en CI. Cómo se calculan esos estados se explica en la traza 2.",
+          "path": "src/cli.js",
+          "lineNumber": 257,
+          "lineContent": "const s = checkSummary(loadMap(r, doc.id));",
+          "symbol": "check",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "71f4d4f5f5de",
+          "snippet": {
+            "startLine": 254,
+            "code": "  const r = root();\n  const doc = loadMap(r, id);\n  const code = await runAgent(r, checkGuide(doc.id) + '\\n\\nStart by calling waymark_check(id: \"' + doc.id + '\") to get the map with its code snippets.', { label: 'fact-check' });\n  const s = checkSummary(loadMap(r, doc.id));\n  out(`\\nwaymark: ${doc.id} fact-check → ${s.supported} supported, ${s.partial} partial, ${s.unsupported} unsupported, ${s.unchecked + s.stale} unchecked (of ${s.total})`);\n  if (opt.open) openFile(path.join(mapDir(r), `${doc.id}.html`));\n  process.exitCode = code || (s.unsupported ? 1 : 0);\n}\n\nasync function enrich(id) {\n  if (!id) throw new Error('Usage: waymark enrich <id> [--engine claude|codex]');\n  const r = root();\n  const doc = loadMap(r, id);\n  const code = await runAgent(r, enrichGuide(doc.id));\n  const gaps = narrativeGaps(loadMap(r, doc.id));\n  const html = path.join(mapDir(r), `${doc.id}.html`);\n  out(`\\nwaymark: ${doc.id}  narrative ${gaps.complete ? 'complete' : 'still incomplete: ' + JSON.stringify(gaps)}\\nhtml: ${html}`);\n  if (opt.open) openFile(html);"
+          },
+          "narrativeHash": "71f4d4f5f5de"
+        }
+      ],
+      "tree": [
+        {
+          "label": "Entrada humana: waymark check <id>",
+          "children": [
+            {
+              "ref": "1a",
+              "children": [
+                {
+                  "ref": "1b",
+                  "via": "tarea = checkGuide + 'llama waymark_check'",
+                  "children": [
+                    {
+                      "ref": "1d",
+                      "via": "construye el prompt",
+                      "children": [
+                        {
+                          "ref": "1e",
+                          "via": "paso final del procedimiento"
+                        }
+                      ]
+                    },
+                    {
+                      "ref": "1c",
+                      "via": "spawn claude/codex"
+                    },
+                    {
+                      "ref": "1k",
+                      "via": "agente termina → recarga mapa"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "Entrada agéntica: tool MCP",
+          "children": [
+            {
+              "ref": "1f",
+              "via": "primera llamada del verificador",
+              "children": [
+                {
+                  "ref": "1g",
+                  "children": [
+                    {
+                      "ref": "1d",
+                      "label": "checkGuide (procedimiento)",
+                      "via": "mismo guion que la CLI"
+                    },
+                    {
+                      "ref": "1h",
+                      "via": "detail: 'full'",
+                      "children": [
+                        {
+                          "label": "renderTrace → renderLoc por nodo",
+                          "children": [
+                            {
+                              "ref": "1i",
+                              "via": "narrativa"
+                            },
+                            {
+                              "ref": "1j",
+                              "via": "código numerado"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "label": "verificador → waymark_record_check (traza 2)",
+                      "via": "veredictos"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "narrativeHash": "a6082600498f"
+    },
+    {
+      "id": "2",
+      "title": "Registro de veredictos y estado del fact-check (recordCheck, checkState, stale)",
+      "description": "Cómo se guardan los veredictos del verificador y cómo se derivan, resumen y muestran sus estados, incluido stale.",
+      "diagramTitle": "Ciclo de vida de un veredicto de fact-check",
+      "motivation": "Un fact-check solo vale mientras el código y la prosa que juzgó sigan iguales. Si alguien edita la explicación o el bloque de código cambia, el veredicto anterior ya no garantiza nada. Por eso Waymark no guarda solo el 'supported/partial/unsupported': lo sella con dos huellas (ctxHash del código y proseHash del texto) y calcula el estado en el momento de leerlo, de modo que un veredicto viejo se degrada solo a 'stale' sin que nadie tenga que invalidarlo a mano.",
+      "details": "Todo empieza cuando el agente verificador llama a la tool MCP `waymark_record_check` [2a], cuyo esquema Zod solo acepta los tres veredictos válidos para nodos, trazas e historia. El handler delega en `recordCheck` del store, que primero recalcula los hashes de contexto del mapa [2b] para que el sello refleje el código actual del árbol de trabajo.\n\nPor cada nodo, `recordCheck` escribe `l.check` con el veredicto, los problemas, la fecha, el verificador y las dos huellas [2c]; la huella de prosa sale de `proseHash` [2h], que resume título, descripción y explicación. Las trazas reciben su propio `check` con un `traceHash` [2d]. Al final se recalcula `meta.check` con `checkSummary` [2e], que recorre todos los nodos y cuenta cuántos caen en cada estado [2f].\n\nEl estado lo decide `checkState` [2g]: sin `check` es 'unchecked'; si alguna huella no coincide es 'stale'; si no, el veredicto guardado. Cuando el mapa se vuelve a guardar o reanclar, el store solo arrastra el `check` anterior si ambas huellas siguen iguales [2i].\n\nLos consumidores leen siempre a través de `checkState`: `lint` convierte 'unsupported' en error y 'partial' en aviso [2j], el renderer markdown añade marcas ✓/◑/✗ para los agentes [2k] y el renderer HTML precalcula los estados por nodo para que el visor del navegador no tenga que hashear [2l].",
+      "locations": [
+        {
+          "id": "2a",
+          "title": "Tool waymark_record_check",
+          "description": "Registra la tool MCP que recibe veredictos de nodos, trazas e historia.",
+          "explanation": "Este es el punto de entrada para el agente verificador, normalmente un subagente nuevo que no escribió el mapa. El esquema Zod define `verdict` como enum de 'supported', 'partial' y 'unsupported' y acepta listas de `nodes` y `traces`, una `story` y el nombre del `checker`. El handler (`safe(async ({ id, root, ...v }) => text(recordCheck(...)))`) no tiene lógica propia: resuelve la raíz y pasa todo a `recordCheck` [2b]. La descripción de la tool ya avisa del contrato: un veredicto vale mientras el código y la prosa del nodo no cambien.",
+          "path": "src/mcp.js",
+          "lineNumber": 331,
+          "lineContent": "'waymark_record_check',",
+          "symbol": "waymark_record_check",
+          "status": "ok",
+          "fileHash": "2b0b28761299",
+          "ctxHash": "3d38f3a64b34",
+          "snippet": {
+            "startLine": 328,
+            "code": "\n  const verdict = z.enum(['supported', 'partial', 'unsupported']);\n  server.registerTool(\n    'waymark_record_check',\n    {\n      title: 'Record fact-check verdicts',\n      description:\n        'Stores fact-check verdicts. A verdict stays valid while the node\\'s code block and prose are unchanged; it becomes \"stale\" otherwise. unsupported verdicts are lint errors.',\n      inputSchema: {\n        id: z.string(),\n        nodes: z.array(z.object({ id: z.string(), verdict, issues: z.array(z.string()).optional() })).optional(),\n        traces: z.array(z.object({ id: z.string(), verdict, issues: z.array(z.string()).optional() })).optional(),\n        story: z.object({ verdict, issues: z.array(z.string()).optional() }).optional(),\n        checker: z.string().optional().describe('Who checked (model/agent name)'),\n        root: rootArg,\n      },\n    },\n    safe(async ({ id, root, ...v }) => text(recordCheck(rootOf(root), id, v))),"
+          },
+          "narrativeHash": "3d38f3a64b34"
+        },
+        {
+          "id": "2b",
+          "title": "Refrescar hashes de contexto",
+          "description": "Recalcula los ctxHash del mapa antes de sellar veredictos.",
+          "explanation": "`recordCheck` carga el mapa y, antes de tocar nada, actualiza los `ctxHash` de cada ubicación contra el código actual. Así el sello que se guarda en [2c] corresponde al código que el verificador acaba de leer, no a una versión anterior guardada en el JSON. Si se saltara este paso, un veredicto podría nacer ya 'stale' o, peor, parecer vigente sobre código que cambió. Después prepara la marca de tiempo común y un índice de nodos por id.",
+          "path": "src/store.js",
+          "lineNumber": 141,
+          "lineContent": "refreshContextHashes(root, doc);",
+          "symbol": "recordCheck",
+          "status": "ok",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "d2cf3bc10ea0",
+          "snippet": {
+            "startLine": 138,
+            "code": " */\nexport function recordCheck(root, id, { nodes = [], traces = [], story = null, checker = '' } = {}) {\n  const doc = loadMap(root, id);\n  refreshContextHashes(root, doc);\n  const at = new Date().toISOString();\n  const unknown = [];\n  const byId = new Map(doc.traces.flatMap((t) => t.locations).map((l) => [l.id, l]));\n  for (const v of nodes) {\n    const l = byId.get(v.id);\n    if (!l || !VERDICTS.has(v.verdict)) {\n      unknown.push(v.id);\n      continue;\n    }\n    l.check = { verdict: v.verdict, issues: v.issues || [], at, checker, ctxHash: l.ctxHash, proseHash: proseHash(l) };\n  }\n  for (const v of traces) {\n    const t = doc.traces.find((x) => x.id === String(v.id));\n    if (!t || !VERDICTS.has(v.verdict)) {"
+          },
+          "narrativeHash": "d2cf3bc10ea0"
+        },
+        {
+          "id": "2c",
+          "title": "Sellar veredicto de nodo",
+          "description": "Guarda veredicto, problemas, autor y las huellas ctxHash y proseHash.",
+          "explanation": "Para cada veredicto de nodo se busca la ubicación por id; si no existe o el veredicto no está en `VERDICTS`, el id va a la lista `unknown` que se devuelve al agente. Si es válido, se escribe el objeto `check` con dos huellas: `ctxHash` (el código) y `proseHash` (el texto, ver [2h]). Esas huellas son una foto de lo que se juzgó y son las que `checkState` [2g] compara después. Es como firmar un documento con la fecha y una copia de la página firmada.",
+          "path": "src/store.js",
+          "lineNumber": 151,
+          "lineContent": "l.check = { verdict: v.verdict, issues: v.issues || [], at, checker, ctxHash: l.ctxHash, proseHash: proseHash(l) };",
+          "symbol": "recordCheck",
+          "status": "ok",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "a8e4604858dc",
+          "snippet": {
+            "startLine": 148,
+            "code": "      unknown.push(v.id);\n      continue;\n    }\n    l.check = { verdict: v.verdict, issues: v.issues || [], at, checker, ctxHash: l.ctxHash, proseHash: proseHash(l) };\n  }\n  for (const v of traces) {\n    const t = doc.traces.find((x) => x.id === String(v.id));\n    if (!t || !VERDICTS.has(v.verdict)) {\n      unknown.push(`trace ${v.id}`);\n      continue;\n    }\n    t.check = { verdict: v.verdict, issues: v.issues || [], at, checker, hash: traceHash(t) };\n  }\n  if (story && VERDICTS.has(story.verdict)) doc.storyCheck = { verdict: story.verdict, issues: story.issues || [], at, checker };\n  doc.meta = { ...doc.meta, updatedAt: at, check: checkSummary(doc) };\n  persist(root, doc);\n  writeHtml(root, doc);\n  return { id: doc.id, unknown, summary: doc.meta.check };"
+          },
+          "narrativeHash": "a8e4604858dc"
+        },
+        {
+          "id": "2d",
+          "title": "Sellar veredicto de traza",
+          "description": "Guarda el veredicto de la traza atado a su traceHash.",
+          "explanation": "Las trazas tienen prosa propia (motivación y detalles) que también se verifica. En vez de dos huellas usan un único `traceHash`, que lint [2j] compara para decidir si un 'unsupported' sigue vigente. La historia del mapa va aparte en `doc.storyCheck`, sin hash. Igual que con los nodos, ids desconocidos o veredictos inválidos terminan en `unknown` en vez de lanzar error.",
+          "path": "src/store.js",
+          "lineNumber": 159,
+          "lineContent": "t.check = { verdict: v.verdict, issues: v.issues || [], at, checker, hash: traceHash(t) };",
+          "symbol": "recordCheck",
+          "status": "ok",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "6089679c516c",
+          "snippet": {
+            "startLine": 156,
+            "code": "      unknown.push(`trace ${v.id}`);\n      continue;\n    }\n    t.check = { verdict: v.verdict, issues: v.issues || [], at, checker, hash: traceHash(t) };\n  }\n  if (story && VERDICTS.has(story.verdict)) doc.storyCheck = { verdict: story.verdict, issues: story.issues || [], at, checker };\n  doc.meta = { ...doc.meta, updatedAt: at, check: checkSummary(doc) };\n  persist(root, doc);\n  writeHtml(root, doc);\n  return { id: doc.id, unknown, summary: doc.meta.check };\n}\n\nexport function checkSummary(doc) {\n  const out = { supported: 0, partial: 0, unsupported: 0, unchecked: 0, stale: 0, total: 0 };\n  for (const t of doc.traces) for (const l of t.locations) {\n    out[checkState(l)]++;\n    out.total++;\n  }"
+          },
+          "narrativeHash": "6089679c516c"
+        },
+        {
+          "id": "2e",
+          "title": "Recalcular meta.check",
+          "description": "Actualiza el resumen del mapa y persiste JSON y HTML.",
+          "explanation": "Tras escribir los veredictos, el resumen agregado `meta.check` se recalcula desde cero con `checkSummary` [2f] en lugar de sumarse incrementalmente, así nunca se desincroniza. Luego `persist` guarda el JSON y `writeHtml` regenera el visor, que a su vez precalcula los estados [2l]. La tool devuelve `{ id, unknown, summary }`, para que el agente vea de inmediato el recuento y los ids que no se reconocieron.",
+          "path": "src/store.js",
+          "lineNumber": 162,
+          "lineContent": "doc.meta = { ...doc.meta, updatedAt: at, check: checkSummary(doc) };",
+          "symbol": "recordCheck",
+          "status": "ok",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "122b35596c74",
+          "snippet": {
+            "startLine": 159,
+            "code": "    t.check = { verdict: v.verdict, issues: v.issues || [], at, checker, hash: traceHash(t) };\n  }\n  if (story && VERDICTS.has(story.verdict)) doc.storyCheck = { verdict: story.verdict, issues: story.issues || [], at, checker };\n  doc.meta = { ...doc.meta, updatedAt: at, check: checkSummary(doc) };\n  persist(root, doc);\n  writeHtml(root, doc);\n  return { id: doc.id, unknown, summary: doc.meta.check };\n}\n\nexport function checkSummary(doc) {\n  const out = { supported: 0, partial: 0, unsupported: 0, unchecked: 0, stale: 0, total: 0 };\n  for (const t of doc.traces) for (const l of t.locations) {\n    out[checkState(l)]++;\n    out.total++;\n  }\n  return out;\n}\n"
+          },
+          "narrativeHash": "122b35596c74"
+        },
+        {
+          "id": "2f",
+          "title": "checkSummary cuenta estados",
+          "description": "Cuenta nodos por estado derivado: supported, partial, unsupported, unchecked, stale.",
+          "explanation": "`checkSummary` inicializa un contador con las cinco categorías y `total`, y recorre todos los nodos de todas las trazas. La clave es que no lee `l.check.verdict` directamente, sino `checkState(l)` [2g]: un veredicto 'supported' cuya prosa se editó cuenta como 'stale'. La misma función se reutiliza en el CLI y en el índice de mapas, de modo que todos los lugares muestran el mismo número.",
+          "path": "src/store.js",
+          "lineNumber": 171,
+          "lineContent": "out[checkState(l)]++;",
+          "symbol": "checkSummary",
+          "status": "ok",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "bc7c46c8578d",
+          "snippet": {
+            "startLine": 168,
+            "code": "export function checkSummary(doc) {\n  const out = { supported: 0, partial: 0, unsupported: 0, unchecked: 0, stale: 0, total: 0 };\n  for (const t of doc.traces) for (const l of t.locations) {\n    out[checkState(l)]++;\n    out.total++;\n  }\n  return out;\n}\n\n/** Stores execution results ({ nodeId: { hit, count } }) from coverage. */\nexport function recordExec(root, id, results, { source = 'coverage', command = '' } = {}) {\n  const doc = loadMap(root, id);\n  refreshContextHashes(root, doc);\n  const at = new Date().toISOString();\n  const sum = { hit: 0, miss: 0, unknown: 0 };\n  for (const t of doc.traces) {\n    for (const l of t.locations) {\n      const r = results[l.id];"
+          },
+          "narrativeHash": "bc7c46c8578d"
+        },
+        {
+          "id": "2g",
+          "title": "checkState deriva el estado",
+          "description": "Devuelve unchecked, stale o el veredicto según coincidan las huellas.",
+          "explanation": "Este es el corazón de la trazabilidad: el estado nunca se guarda, se calcula al leer. Sin `check` el nodo es 'unchecked'; si el `ctxHash` actual del nodo difiere del sellado, o la prosa actual produce otro `proseHash` [2h], el veredicto es 'stale'; en otro caso se devuelve el veredicto tal cual. Gracias a esto no hace falta invalidar veredictos al editar: basta con que algo cambie para que todos los consumidores ([2j], [2k], [2l]) lo vean viejo.",
+          "path": "src/state.js",
+          "lineNumber": 13,
+          "lineContent": "if (l.check.ctxHash !== l.ctxHash || l.check.proseHash !== proseHash(l)) return 'stale';",
+          "symbol": "checkState",
+          "status": "ok",
+          "fileHash": "5663d59cddad",
+          "ctxHash": "ca349e845d36",
+          "snippet": {
+            "startLine": 10,
+            "code": "/** supported | partial | unsupported | unchecked | stale (code or prose changed since the check). */\nexport function checkState(l) {\n  if (!l.check) return 'unchecked';\n  if (l.check.ctxHash !== l.ctxHash || l.check.proseHash !== proseHash(l)) return 'stale';\n  return l.check.verdict;\n}\n\n/** hit | miss | unknown | stale (code changed since coverage was taken). */\nexport function execState(l) {\n  if (!l.exec) return 'unknown';\n  if (l.exec.ctxHash !== l.ctxHash) return 'stale';\n  return l.exec.hit ? 'hit' : 'miss';\n}\n"
+          },
+          "narrativeHash": "ca349e845d36"
+        },
+        {
+          "id": "2h",
+          "title": "proseHash",
+          "description": "Huella SHA-1 corta de título, descripción y explicación del nodo.",
+          "explanation": "`proseHash` une título, descripción y explicación con '|' y aplica un SHA-1 truncado a 12 caracteres. Es justo el texto que el verificador juzgó, así que cualquier retoque (incluido uno hecho con `waymark_annotate`) cambia la huella. Vive en `state.js`, un módulo sin dependencias, para que lo compartan el store [2c] y los renderers. Las notas humanas no entran en el hash: añadir una nota no invalida el fact-check.",
+          "path": "src/state.js",
+          "lineNumber": 8,
+          "lineContent": "export const proseHash = (l) => sha([l.title, l.description, l.explanation || ''].join('|'));",
+          "symbol": "proseHash",
+          "status": "ok",
+          "fileHash": "5663d59cddad",
+          "ctxHash": "ca390e8ce6d6",
+          "snippet": {
+            "startLine": 5,
+            "code": "const sha = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 12);\n\n/** Hash of the prose a fact-check judged (title + description + explanation). */\nexport const proseHash = (l) => sha([l.title, l.description, l.explanation || ''].join('|'));\n\n/** supported | partial | unsupported | unchecked | stale (code or prose changed since the check). */\nexport function checkState(l) {\n  if (!l.check) return 'unchecked';\n  if (l.check.ctxHash !== l.ctxHash || l.check.proseHash !== proseHash(l)) return 'stale';\n  return l.check.verdict;\n}\n\n/** hit | miss | unknown | stale (code changed since coverage was taken). */\nexport function execState(l) {\n  if (!l.exec) return 'unknown';\n  if (l.exec.ctxHash !== l.ctxHash) return 'stale';\n  return l.exec.hit ? 'hit' : 'miss';\n}"
+          },
+          "narrativeHash": "ca390e8ce6d6"
+        },
+        {
+          "id": "2i",
+          "title": "Arrastre al re-guardar",
+          "description": "Al re-guardar el mapa, conserva el check solo si ambas huellas coinciden.",
+          "explanation": "Cuando un mapa se vuelve a crear o refrescar, el store copia el estado humano de la versión anterior a la nueva, nodo por nodo. Para el fact-check aplica la misma regla que `checkState` [2g]: solo se conserva si código y prosa siguen idénticos. Así un veredicto obsoleto no sobrevive a una regeneración y se descarta en vez de quedarse como 'stale' para siempre. Las trazas usan la comparación equivalente con `traceHash`.",
+          "path": "src/store.js",
+          "lineNumber": 98,
+          "lineContent": "if (o.check && o.check.ctxHash === l.ctxHash && o.check.proseHash === proseHash(l)) l.check = o.check;",
+          "status": "ok",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "b725736dce9c",
+          "snippet": {
+            "startLine": 95,
+            "code": "      const o = old.get(l.id);\n      if (!o) continue;\n      if (o.notes?.length) l.notes = o.notes;\n      if (o.check && o.check.ctxHash === l.ctxHash && o.check.proseHash === proseHash(l)) l.check = o.check;\n      if (o.exec && o.exec.ctxHash === l.ctxHash) l.exec = o.exec;\n    }\n  }\n}\n\n\n/** Adds (or removes, with remove=index) a human note on a node. Not AI prose: never rewritten by agents. */\nexport function noteMap(root, id, nodeId, { text = '', author = '', remove = null } = {}) {\n  const doc = loadMap(root, id);\n  const l = doc.traces.flatMap((t) => t.locations).find((x) => x.id === nodeId);\n  if (!l) throw new Error(`Node \"${nodeId}\" not found in ${doc.id}`);\n  l.notes = l.notes || [];\n  if (remove != null) {\n    if (!l.notes[remove]) throw new Error(`Note #${remove} not found on [${nodeId}]`);"
+          },
+          "narrativeHash": "b725736dce9c"
+        },
+        {
+          "id": "2j",
+          "title": "Lint de veredictos",
+          "description": "Lint convierte unsupported en error y partial en aviso.",
+          "explanation": "`lint` recorre los nodos y pide su estado a `checkState` [2g]. Un 'unsupported' vigente es un error que hace fallar el lint (y por tanto el CI), con los `issues` del verificador como mensaje; un 'partial' es solo un aviso. Los 'stale' no se reportan aquí: un veredicto viejo no prueba nada en ningún sentido. Para trazas y la historia se aplica lo mismo, comprobando además que el `traceHash` siga coincidiendo.",
+          "path": "src/lint.js",
+          "lineNumber": 66,
+          "lineContent": "if (st === 'unsupported') add('error', `[${l.id}] fact-check`, `unsupported: ${(l.check.issues || []).join('; ') || 'see map'}`);",
+          "status": "ok",
+          "fileHash": "f67dc3a42be0",
+          "ctxHash": "790c920c734f",
+          "snippet": {
+            "startLine": 63,
+            "code": "  for (const t of doc.traces) {\n    for (const l of t.locations) {\n      const st = checkState(l);\n      if (st === 'unsupported') add('error', `[${l.id}] fact-check`, `unsupported: ${(l.check.issues || []).join('; ') || 'see map'}`);\n      else if (st === 'partial') add('warn', `[${l.id}] fact-check`, `partial: ${(l.check.issues || []).join('; ') || 'see map'}`);\n      if (l.mapRef && mapIds && !mapIds.has(l.mapRef.split('#')[0])) add('error', `[${l.id}] mapRef`, `links to unknown map \"${l.mapRef}\"`);\n    }\n    if (t.check?.verdict === 'unsupported' && t.check.hash === traceHash(t)) add('error', `trace ${t.id} fact-check`, `unsupported: ${(t.check.issues || []).join('; ')}`);\n  }\n  if (doc.storyCheck?.verdict === 'unsupported') add('error', 'story fact-check', `unsupported: ${(doc.storyCheck.issues || []).join('; ')}`);\n\n  const errors = issues.filter((i) => i.level === 'error').length;\n  return { id: doc.id, errors, warnings: issues.length - errors, issues, ok: errors === 0 };\n}\n"
+          },
+          "narrativeHash": "790c920c734f"
+        },
+        {
+          "id": "2k",
+          "title": "Marcas en markdown",
+          "description": "El markdown para agentes añade marcas ✓, ◑ o ✗ por nodo.",
+          "explanation": "Cuando un agente consume un mapa como contexto (resource `waymark://` o `waymark_get`), cada nodo lleva una línea de banderas. Aquí se calcula el estado y se traduce a '✓ fact-checked', '◑ partially verified: …' o '✗ fact-check failed: …' con los problemas registrados. 'stale' y 'unchecked' no muestran marca, así el agente no confía en un veredicto que ya no aplica. Justo después se añaden las banderas de ejecución, que pertenecen a otra traza.",
+          "path": "src/render/markdown.js",
+          "lineNumber": 41,
+          "lineContent": "const cs = checkState(loc);",
+          "symbol": "renderLoc",
+          "status": "ok",
+          "fileHash": "314557c1859a",
+          "ctxHash": "994018ef4a3e",
+          "snippet": {
+            "startLine": 38,
+            "code": "  );\n  o.push(`  ${loc.description}`);\n  const flags = [];\n  const cs = checkState(loc);\n  if (cs === 'supported') flags.push('✓ fact-checked');\n  else if (cs === 'partial') flags.push(`◑ partially verified: ${(loc.check.issues || []).join('; ')}`);\n  else if (cs === 'unsupported') flags.push(`✗ fact-check failed: ${(loc.check.issues || []).join('; ')}`);\n  const es = execState(loc);\n  if (es === 'hit') flags.push(`▶ executed by the tests (${loc.exec.count}×)`);\n  else if (es === 'miss') flags.push('○ not executed by the tests');\n  if (loc.mapRef) flags.push(`→ detailed map: waymark://${loc.mapRef.replace('#', '/')}`);\n  if (flags.length) o.push(`  _${flags.join(' · ')}_`);\n  if (full && loc.explanation) o.push(`  ${loc.explanation.replace(/\\n/g, '\\n  ')}`);\n  for (const n of loc.notes || []) o.push(`  > 📝 Team note (${n.author}, ${String(n.at).slice(0, 10)}): ${n.text}`);\n  if (full && loc.snippet?.code) {\n    const numbered = loc.snippet.code\n      .split('\\n')\n      .map((l, i) => {"
+          },
+          "narrativeHash": "994018ef4a3e"
+        },
+        {
+          "id": "2l",
+          "title": "Estados precalculados HTML",
+          "description": "El visor HTML embebe el estado de cada nodo ya calculado.",
+          "explanation": "El navegador no puede calcular SHA-1 de forma síncrona, así que `renderHtml` deriva los estados en el servidor y los mete en `data.states`. El cliente del visor solo lee `states[id].check` para pintar la insignia del nodo. Como `writeHtml` se invoca al final de `recordCheck` [2e], el HTML queda al día en cuanto se registran veredictos; si luego cambia el código, el siguiente render mostrará 'stale'.",
+          "path": "src/render/html.js",
+          "lineNumber": 32,
+          "lineContent": "doc.traces.flatMap((t) => t.locations.map((l) => [l.id, { check: checkState(l), exec: execState(l) }])),",
+          "symbol": "renderHtml",
+          "status": "ok",
+          "fileHash": "8417b34b8047",
+          "ctxHash": "9db4caf1c6ab",
+          "snippet": {
+            "startLine": 29,
+            "code": "    maps,\n    // Precomputed per-node state (fact-check verdict validity needs hashes the browser can't do sync).\n    states: Object.fromEntries(\n      doc.traces.flatMap((t) => t.locations.map((l) => [l.id, { check: checkState(l), exec: execState(l) }])),\n    ),\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    // Smaller context blocks for \"copy trace / node as context\".\n    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),\n    nodeMd: Object.fromEntries(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, renderMarkdown(doc, { node: l.id })]))),\n    mermaid: renderMermaid({ ...doc, diagram: undefined }),\n  };\n  return `<!doctype html>\n<html lang=\"${escHtml(doc.language || 'en')}\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"generator\" content=\"waymark\">\n<title>Waymark · ${escHtml(doc.title)}</title>"
+          },
+          "narrativeHash": "9db4caf1c6ab"
+        }
+      ],
+      "tree": [
+        {
+          "ref": "2a",
+          "children": [
+            {
+              "label": "recordCheck(root, id, v)",
+              "via": "delega",
+              "children": [
+                {
+                  "ref": "2b"
+                },
+                {
+                  "label": "por cada nodo / traza",
+                  "children": [
+                    {
+                      "ref": "2c",
+                      "via": "nodo válido",
+                      "children": [
+                        {
+                          "ref": "2h",
+                          "via": "huella de prosa"
+                        }
+                      ]
+                    },
+                    {
+                      "ref": "2d",
+                      "via": "traza válida"
+                    }
+                  ]
+                },
+                {
+                  "ref": "2e",
+                  "children": [
+                    {
+                      "ref": "2f",
+                      "children": [
+                        {
+                          "ref": "2g",
+                          "via": "estado derivado"
+                        }
+                      ]
+                    },
+                    {
+                      "label": "persist + writeHtml",
+                      "children": [
+                        {
+                          "ref": "2l",
+                          "via": "states por nodo"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "al re-guardar el mapa",
+          "children": [
+            {
+              "ref": "2i",
+              "via": "mismas huellas"
+            }
+          ]
+        },
+        {
+          "label": "consumidores vía checkState",
+          "children": [
+            {
+              "ref": "2j",
+              "via": "error / aviso"
+            },
+            {
+              "ref": "2k",
+              "via": "marcas ✓ ◑ ✗"
+            }
+          ]
+        }
+      ],
+      "narrativeHash": "37511dc469c2"
+    },
+    {
+      "id": "3",
+      "title": "Diff de impacto: de git diff a nodos afectados",
+      "description": "Cómo diffMaps convierte un git diff en la lista de mapas, nodos tocados, anclas rotas y prosa desactualizada.",
+      "diagramTitle": "Cálculo de impacto de un change set sobre los mapas",
+      "motivation": "Un mapa de Waymark es valioso mientras describe el código real; el peligro es que un PR toque justo las líneas que un nodo explica y nadie se entere. diff.js responde a la pregunta «¿qué flujos documentados rompe o desactualiza este cambio?» sin necesidad de un LLM: basta cruzar los números de línea que git reporta con el bloque de código que cada nodo narra, y complementarlo con la verificación de anclas y de deriva narrativa que ya existe.",
+      "details": "Todo arranca en diffMaps [3a], que lo primero que hace es pedir el conjunto de líneas cambiadas [3b]. changedLines lanza `git diff --unified=0` [3c], ya sea contra el working tree (base `HEAD` = cambios sin commitear) o como rango `base...HEAD` contra el merge-base para un PR. Con contexto cero, cada hunk dice exactamente qué líneas de la versión nueva cambiaron; la expresión regular de cabecera de hunk [3d] extrae inicio y cantidad, y las eliminaciones puras se marcan alrededor del corte [3e] para que un borrado también cuente como impacto.\n\nCon ese `Map<archivo, Set<línea>>`, diffMaps recorre cada mapa, traza y ubicación. Para las ubicaciones de archivos cambiados calcula el rango del bloque que el nodo describe [3f] usando contextRange de anchor.js [3g], que a su vez se apoya en contextIndices [3h]: la línea ancla más su cuerpo indentado (o unas cuantas líneas hermanas si es una sentencia suelta). Las líneas cambiadas que caen dentro de ese rango [3i] convierten al nodo en «tocado».\n\nEl diff de líneas no ve todo: un ancla puede haberse movido o desaparecido, y la prosa puede haber quedado vieja aunque el bloque no esté en el diff. Por eso se ejecuta además verifyMap [3j] y se filtran las anclas `unresolved`/`missing`. Los mapas sin nodos tocados, sin anclas rotas y sin deriva se descartan [3k], y el resultado final es un objeto plano `{ base, range, files, maps }` [3l] listo para que otra capa lo renderice o lo publique en un PR.",
+      "locations": [
+        {
+          "id": "3a",
+          "title": "Entrada diffMaps",
+          "description": "Punto de entrada: reporte de mapas afectados por un change set",
+          "explanation": "Aquí entra cualquiera que quiera saber el impacto de un cambio: la CLI, el MCP o la Action de PR. Recibe la raíz del repo, una base (por defecto `HEAD`) y la bandera `range`. Con `range=false` compara la base contra el working tree; con `range=true` compara contra el merge-base, que es lo que interesa en un PR. Todo lo demás de la traza ocurre dentro de esta función, hasta el objeto que devuelve en [3l].",
+          "path": "src/diff.js",
+          "lineNumber": 48,
+          "lineContent": "export function diffMaps(root, base = 'HEAD', { range = false } = {}) {",
+          "symbol": "diffMaps",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "b4f017517a84",
+          "snippet": {
+            "startLine": 45,
+            "code": "}\n\n/** Report of the maps affected by a change set. */\nexport function diffMaps(root, base = 'HEAD', { range = false } = {}) {\n  const changes = changedLines(root, base, { range });\n  const cache = new FileCache(root);\n  const maps = [];\n  for (const m of listMaps(root)) {\n    const doc = loadMap(root, m.id);\n    const touched = [];\n    for (const t of doc.traces) {\n      for (const l of t.locations) {\n        const changed = changes.get(l.path);\n        if (!changed) continue;\n        const f = cache.read(l.path);\n        if (!f) continue;\n        const r = contextRange(f.lines, Math.min(l.lineNumber - 1, f.lines.length - 1)) || [l.lineNumber, l.lineNumber];\n        const hits = [...changed].filter((n) => n >= r[0] && n <= r[1]);"
+          },
+          "narrativeHash": "b4f017517a84"
+        },
+        {
+          "id": "3b",
+          "title": "Pedir líneas cambiadas",
+          "description": "Obtiene el mapa archivo → conjunto de líneas modificadas",
+          "explanation": "Antes de mirar ningún mapa, diffMaps delega en changedLines la traducción del diff de git a algo consultable. El resultado es un `Map` cuya clave es la ruta relativa y cuyo valor es un `Set` de números de línea de la versión *nueva*. Esto es clave: los nodos se anclan sobre el archivo actual, así que hay que comparar contra las líneas nuevas, no las viejas. Justo después se crea un `FileCache` para no releer archivos en [3f].",
+          "path": "src/diff.js",
+          "lineNumber": 49,
+          "lineContent": "const changes = changedLines(root, base, { range });",
+          "symbol": "diffMaps",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "2a7e051f1331",
+          "snippet": {
+            "startLine": 46,
+            "code": "\n/** Report of the maps affected by a change set. */\nexport function diffMaps(root, base = 'HEAD', { range = false } = {}) {\n  const changes = changedLines(root, base, { range });\n  const cache = new FileCache(root);\n  const maps = [];\n  for (const m of listMaps(root)) {\n    const doc = loadMap(root, m.id);\n    const touched = [];\n    for (const t of doc.traces) {\n      for (const l of t.locations) {\n        const changed = changes.get(l.path);\n        if (!changed) continue;\n        const f = cache.read(l.path);\n        if (!f) continue;\n        const r = contextRange(f.lines, Math.min(l.lineNumber - 1, f.lines.length - 1)) || [l.lineNumber, l.lineNumber];\n        const hits = [...changed].filter((n) => n >= r[0] && n <= r[1]);\n        if (hits.length) touched.push({ id: l.id, title: l.title, trace: t.id, path: l.path, from: r[0], to: r[1], lines: hits.length });"
+          },
+          "narrativeHash": "2a7e051f1331"
+        },
+        {
+          "id": "3c",
+          "title": "git diff --unified=0",
+          "description": "Diff sin contexto, con detección de renombres, contra base o rango",
+          "explanation": "La elección de flags es deliberada: `--unified=0` elimina las líneas de contexto, de modo que cada hunk describe solo lo que realmente cambió. `--no-color` y `--no-ext-diff` garantizan una salida parseable aunque el usuario tenga configurado un difftool, y `-M` sigue renombres para que las rutas `+++ b/...` apunten al archivo nuevo. En la línea siguiente se agrega `base` o `base...HEAD` según el modo, y el helper `git` ejecuta el comando con un buffer amplio.",
+          "path": "src/diff.js",
+          "lineNumber": 20,
+          "lineContent": "const args = ['diff', '--unified=0', '--no-color', '--no-ext-diff', '-M'];",
+          "symbol": "changedLines",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "05a59c236ad2",
+          "snippet": {
+            "startLine": 17,
+            "code": " * (base \"HEAD\" = uncommitted changes) or `base...HEAD` (merge-base) when `range` is true.\n */\nexport function changedLines(root, base = 'HEAD', { range = false } = {}) {\n  const args = ['diff', '--unified=0', '--no-color', '--no-ext-diff', '-M'];\n  args.push(range ? `${base}...HEAD` : base);\n  const out = git(root, args);\n  const files = new Map();\n  let cur = null;\n  for (const line of out.split('\\n')) {\n    if (line.startsWith('+++ ')) {\n      const p = line.slice(4).trim();\n      cur = p === '/dev/null' ? null : p.replace(/^b\\//, '');\n      if (cur && !files.has(cur)) files.set(cur, new Set());\n      continue;\n    }\n    const m = cur && line.match(/^@@ -\\d+(?:,\\d+)? \\+(\\d+)(?:,(\\d+))? @@/);\n    if (m) {\n      const start = Number(m[1]);"
+          },
+          "narrativeHash": "05a59c236ad2"
+        },
+        {
+          "id": "3d",
+          "title": "Parsear cabecera de hunk",
+          "description": "Extrae inicio y cantidad de líneas nuevas de cada @@",
+          "explanation": "El bucle va leyendo la salida línea a línea: las líneas `+++ ` fijan el archivo actual `cur` (ignorando `/dev/null` de los borrados). Cada cabecera `@@ -a,b +c,d @@` se parsea aquí y solo interesa la parte `+c,d`, es decir, dónde quedaron las líneas en la versión nueva. Si falta `d`, git implica 1 línea. Con eso se agregan al `Set` del archivo todas las líneas del rango.",
+          "path": "src/diff.js",
+          "lineNumber": 32,
+          "lineContent": "const m = cur && line.match(/^@@ -\\d+(?:,\\d+)? \\+(\\d+)(?:,(\\d+))? @@/);",
+          "symbol": "changedLines",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "141e057fa7dd",
+          "snippet": {
+            "startLine": 29,
+            "code": "      if (cur && !files.has(cur)) files.set(cur, new Set());\n      continue;\n    }\n    const m = cur && line.match(/^@@ -\\d+(?:,\\d+)? \\+(\\d+)(?:,(\\d+))? @@/);\n    if (m) {\n      const start = Number(m[1]);\n      const count = m[2] == null ? 1 : Number(m[2]);\n      const set = files.get(cur);\n      if (count === 0) {\n        // Pure deletion: mark the lines around the cut.\n        set.add(Math.max(1, start));\n        set.add(start + 1);\n      } else for (let i = 0; i < count; i++) set.add(start + i);\n    }\n  }\n  return files;\n}\n"
+          },
+          "narrativeHash": "141e057fa7dd"
+        },
+        {
+          "id": "3e",
+          "title": "Borrado puro",
+          "description": "Marca las líneas alrededor del corte cuando el hunk solo borra",
+          "explanation": "Un hunk con cantidad nueva 0 significa que se eliminaron líneas sin agregar nada: no existe ninguna línea nueva que marcar. Si se ignorara, borrar media función documentada pasaría desapercibido. La solución es marcar las líneas vecinas al corte (`start` y `start + 1`), así cualquier nodo cuyo bloque abarque ese punto se considera tocado en [3i].",
+          "path": "src/diff.js",
+          "lineNumber": 37,
+          "lineContent": "if (count === 0) {",
+          "symbol": "changedLines",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "ed9fdad58385",
+          "snippet": {
+            "startLine": 34,
+            "code": "      const start = Number(m[1]);\n      const count = m[2] == null ? 1 : Number(m[2]);\n      const set = files.get(cur);\n      if (count === 0) {\n        // Pure deletion: mark the lines around the cut.\n        set.add(Math.max(1, start));\n        set.add(start + 1);\n      } else for (let i = 0; i < count; i++) set.add(start + i);\n    }\n  }\n  return files;\n}\n\n/** Report of the maps affected by a change set. */\nexport function diffMaps(root, base = 'HEAD', { range = false } = {}) {\n  const changes = changedLines(root, base, { range });\n  const cache = new FileCache(root);\n  const maps = [];"
+          },
+          "narrativeHash": "ed9fdad58385"
+        },
+        {
+          "id": "3f",
+          "title": "Rango del bloque del nodo",
+          "description": "Calcula qué líneas narra cada ubicación del mapa",
+          "explanation": "Para cada ubicación cuyo archivo aparece en el diff, se lee el archivo desde el cache y se pregunta a anchor.js qué bloque describe el nodo. El índice se acota al final del archivo por si este se encogió. Si no hay bloque calculable, se cae a la propia línea ancla como rango mínimo. Usar el bloque y no solo la línea ancla evita falsos negativos: cambiar el cuerpo de un `if` debe afectar al nodo anclado en el `if`.",
+          "path": "src/diff.js",
+          "lineNumber": 61,
+          "lineContent": "const r = contextRange(f.lines, Math.min(l.lineNumber - 1, f.lines.length - 1)) || [l.lineNumber, l.lineNumber];",
+          "symbol": "diffMaps",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "beb4ff366260",
+          "snippet": {
+            "startLine": 58,
+            "code": "        if (!changed) continue;\n        const f = cache.read(l.path);\n        if (!f) continue;\n        const r = contextRange(f.lines, Math.min(l.lineNumber - 1, f.lines.length - 1)) || [l.lineNumber, l.lineNumber];\n        const hits = [...changed].filter((n) => n >= r[0] && n <= r[1]);\n        if (hits.length) touched.push({ id: l.id, title: l.title, trace: t.id, path: l.path, from: r[0], to: r[1], lines: hits.length });\n      }\n    }\n    const v = verifyMap(root, doc.id);\n    const broken = v.changes.filter((c) => c.status === 'unresolved' || c.status === 'missing');\n    if (!touched.length && !broken.length && !v.narrative.stale) continue;\n    maps.push({ id: doc.id, title: doc.title, touched, broken, drift: v.narrative });\n  }\n  return { base, range, files: [...changes.keys()], maps };\n}\n\n/** Markdown for PR comments / terminals. */\nexport function renderDiff(rep) {"
+          },
+          "narrativeHash": "beb4ff366260"
+        },
+        {
+          "id": "3g",
+          "title": "contextRange",
+          "description": "Convierte los índices del bloque en un rango 1-based [desde, hasta]",
+          "explanation": "Esta pequeña función existe precisamente para el diff: toma los índices 0-based del bloque y devuelve el primero y el último como números de línea 1-based, comparables con los que da git. Comparte la definición de «bloque» con contextHash, que es lo que usa la detección de deriva narrativa; así el diff y la verificación hablan del mismo trozo de código. Si el índice está fuera del archivo devuelve `null` y [3f] usa el respaldo.",
+          "path": "src/anchor.js",
+          "lineNumber": 196,
+          "lineContent": "export function contextRange(lines, idx) {",
+          "symbol": "contextRange",
+          "status": "ok",
+          "fileHash": "bb82554c2c45",
+          "ctxHash": "0f87c9beb005",
+          "snippet": {
+            "startLine": 193,
+            "code": "}\n\n/** 1-based [first, last] line range of a node's block (used to match diffs against nodes). */\nexport function contextRange(lines, idx) {\n  const ix = contextIndices(lines, idx);\n  return ix.length ? [ix[0] + 1, ix[ix.length - 1] + 1] : null;\n}\n\n/**\n * Hash of the code a node talks about (whitespace-insensitive). Moving the block keeps the\n * hash; editing it changes it — that is how \"narrative drift\" (prose describing old code)\n * is detected, independently of whether the anchor line itself still exists.\n */\nexport function contextHash(lines, idx) {\n  const body = contextBlock(lines, idx).map((l) => norm(l)).join('\\n');\n  return crypto.createHash('sha1').update(body).digest('hex').slice(0, 12);\n}\n"
+          },
+          "narrativeHash": "0f87c9beb005"
+        },
+        {
+          "id": "3h",
+          "title": "contextIndices",
+          "description": "Define el bloque: ancla más cuerpo indentado o líneas hermanas",
+          "explanation": "Es una heurística por indentación, sin parser: desde la línea ancla incluye todas las siguientes con más sangría (el cuerpo de una función o un `if`), y el cierre `}` si corresponde, hasta un máximo `CTX_MAX`. Si el ancla es una sentencia suelta sin cuerpo, toma unas pocas líneas hermanas al mismo nivel (`CTX_SIBLINGS`). Funciona igual en cualquier lenguaje, lo que encaja con el carácter agnóstico de Waymark, aunque en código mal indentado el bloque puede quedar corto o largo.",
+          "path": "src/anchor.js",
+          "lineNumber": 169,
+          "lineContent": "export function contextIndices(lines, idx) {",
+          "symbol": "contextIndices",
+          "status": "ok",
+          "fileHash": "bb82554c2c45",
+          "ctxHash": "12ec021b1af2",
+          "snippet": {
+            "startLine": 166,
+            "code": "}\n\n/** 0-based line indices of the block a node talks about (see contextBlock). */\nexport function contextIndices(lines, idx) {\n  if (idx < 0 || idx >= lines.length) return [];\n  const base = indentOf(lines[idx]);\n  const out = [idx];\n  for (let i = idx + 1; i < lines.length && out.length < CTX_MAX; i++) {\n    const l = lines[i];\n    if (!l.trim()) continue;\n    if (indentOf(l) > base) out.push(i);\n    else {\n      if (out.length > 1 && isCloser(l)) out.push(i);\n      break;\n    }\n  }\n  if (out.length === 1) {\n    // A plain statement: include the next sibling lines at the same indentation."
+          },
+          "narrativeHash": "12ec021b1af2"
+        },
+        {
+          "id": "3i",
+          "title": "Intersección con el diff",
+          "description": "Nodo tocado si alguna línea cambiada cae en su rango",
+          "explanation": "Aquí se cruzan los dos mundos: las líneas que cambió git [3d] y el rango del nodo [3f]. Si hay coincidencias, el nodo se registra en `touched` con su id, título, traza, ruta, rango y cuántas líneas lo tocaron. Ese conteo es útil para priorizar: un nodo con 40 líneas cambiadas probablemente necesita reescribir su explicación, uno con 1 quizá no.",
+          "path": "src/diff.js",
+          "lineNumber": 62,
+          "lineContent": "const hits = [...changed].filter((n) => n >= r[0] && n <= r[1]);",
+          "symbol": "diffMaps",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "1b8964a3eaf1",
+          "snippet": {
+            "startLine": 59,
+            "code": "        const f = cache.read(l.path);\n        if (!f) continue;\n        const r = contextRange(f.lines, Math.min(l.lineNumber - 1, f.lines.length - 1)) || [l.lineNumber, l.lineNumber];\n        const hits = [...changed].filter((n) => n >= r[0] && n <= r[1]);\n        if (hits.length) touched.push({ id: l.id, title: l.title, trace: t.id, path: l.path, from: r[0], to: r[1], lines: hits.length });\n      }\n    }\n    const v = verifyMap(root, doc.id);\n    const broken = v.changes.filter((c) => c.status === 'unresolved' || c.status === 'missing');\n    if (!touched.length && !broken.length && !v.narrative.stale) continue;\n    maps.push({ id: doc.id, title: doc.title, touched, broken, drift: v.narrative });\n  }\n  return { base, range, files: [...changes.keys()], maps };\n}\n\n/** Markdown for PR comments / terminals. */\nexport function renderDiff(rep) {\n  if (!rep.maps.length) return `### Waymark\\n\\nNo documented flow is affected by these changes (${rep.files.length} file(s) changed).`;"
+          },
+          "narrativeHash": "1b8964a3eaf1"
+        },
+        {
+          "id": "3j",
+          "title": "Anclas rotas y deriva",
+          "description": "verifyMap aporta anclas perdidas y prosa desactualizada",
+          "explanation": "El cruce de líneas no detecta todo: un ancla cuyo texto ya no existe, o una prosa que describe un bloque cuyo hash cambió aunque el diff actual no lo toque. Por eso se reutiliza verifyMap, que re-ancla cada ubicación y compara hashes de contexto. De su resultado se quedan los cambios con estado `unresolved` o `missing` como `broken`, y `v.narrative` como información de deriva narrativa (nodos, guías de traza o historia a revisar).",
+          "path": "src/diff.js",
+          "lineNumber": 66,
+          "lineContent": "const v = verifyMap(root, doc.id);",
+          "symbol": "diffMaps",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "4ac8c3d6894b",
+          "snippet": {
+            "startLine": 63,
+            "code": "        if (hits.length) touched.push({ id: l.id, title: l.title, trace: t.id, path: l.path, from: r[0], to: r[1], lines: hits.length });\n      }\n    }\n    const v = verifyMap(root, doc.id);\n    const broken = v.changes.filter((c) => c.status === 'unresolved' || c.status === 'missing');\n    if (!touched.length && !broken.length && !v.narrative.stale) continue;\n    maps.push({ id: doc.id, title: doc.title, touched, broken, drift: v.narrative });\n  }\n  return { base, range, files: [...changes.keys()], maps };\n}\n\n/** Markdown for PR comments / terminals. */\nexport function renderDiff(rep) {\n  if (!rep.maps.length) return `### Waymark\\n\\nNo documented flow is affected by these changes (${rep.files.length} file(s) changed).`;\n  const o = ['### Waymark — documented flows affected by this change', ''];\n  for (const m of rep.maps) {\n    o.push(`**${m.title}** (\\`${m.id}\\`)`);\n    if (m.touched.length) {"
+          },
+          "narrativeHash": "4ac8c3d6894b"
+        },
+        {
+          "id": "3k",
+          "title": "Descartar mapas sanos",
+          "description": "Omite mapas sin nodos tocados, anclas rotas ni deriva",
+          "explanation": "Solo interesan los mapas que algo tienen que contar; los demás se saltan para que el reporte sea corto y accionable. Los que pasan el filtro se agregan con su id, título, `touched`, `broken` y `drift`. Así un PR que no toca ningún flujo documentado produce una lista vacía, lo que la capa de presentación traduce en un mensaje de «nada afectado».",
+          "path": "src/diff.js",
+          "lineNumber": 68,
+          "lineContent": "if (!touched.length && !broken.length && !v.narrative.stale) continue;",
+          "symbol": "diffMaps",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "eecd276877d3",
+          "snippet": {
+            "startLine": 65,
+            "code": "    }\n    const v = verifyMap(root, doc.id);\n    const broken = v.changes.filter((c) => c.status === 'unresolved' || c.status === 'missing');\n    if (!touched.length && !broken.length && !v.narrative.stale) continue;\n    maps.push({ id: doc.id, title: doc.title, touched, broken, drift: v.narrative });\n  }\n  return { base, range, files: [...changes.keys()], maps };\n}\n\n/** Markdown for PR comments / terminals. */\nexport function renderDiff(rep) {\n  if (!rep.maps.length) return `### Waymark\\n\\nNo documented flow is affected by these changes (${rep.files.length} file(s) changed).`;\n  const o = ['### Waymark — documented flows affected by this change', ''];\n  for (const m of rep.maps) {\n    o.push(`**${m.title}** (\\`${m.id}\\`)`);\n    if (m.touched.length) {\n      o.push('', '| Node | Location | Changed lines |', '|---|---|---|');\n      for (const t of m.touched) o.push(`| \\`${t.id}\\` ${t.title} | \\`${t.path}:${t.from}-${t.to}\\` | ${t.lines} |`);"
+          },
+          "narrativeHash": "eecd276877d3"
+        },
+        {
+          "id": "3l",
+          "title": "Objeto de reporte",
+          "description": "Devuelve { base, range, files, maps } para renderizar o publicar",
+          "explanation": "El final del recorrido es un objeto plano y serializable: la base y el modo usados, la lista de archivos cambiados (útil para decir «N archivos cambiaron» aunque no haya impacto) y los mapas afectados. No contiene formato alguno; separar el cálculo de la presentación permite que la misma estructura sirva como JSON para el MCP, como markdown en la terminal o como comentario en un PR.",
+          "path": "src/diff.js",
+          "lineNumber": 71,
+          "lineContent": "return { base, range, files: [...changes.keys()], maps };",
+          "symbol": "diffMaps",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "9818d2d93991",
+          "snippet": {
+            "startLine": 68,
+            "code": "    if (!touched.length && !broken.length && !v.narrative.stale) continue;\n    maps.push({ id: doc.id, title: doc.title, touched, broken, drift: v.narrative });\n  }\n  return { base, range, files: [...changes.keys()], maps };\n}\n\n/** Markdown for PR comments / terminals. */\nexport function renderDiff(rep) {\n  if (!rep.maps.length) return `### Waymark\\n\\nNo documented flow is affected by these changes (${rep.files.length} file(s) changed).`;\n  const o = ['### Waymark — documented flows affected by this change', ''];\n  for (const m of rep.maps) {\n    o.push(`**${m.title}** (\\`${m.id}\\`)`);\n    if (m.touched.length) {\n      o.push('', '| Node | Location | Changed lines |', '|---|---|---|');\n      for (const t of m.touched) o.push(`| \\`${t.id}\\` ${t.title} | \\`${t.path}:${t.from}-${t.to}\\` | ${t.lines} |`);\n    }\n    if (m.broken.length) o.push('', `⚠ Anchors no longer found: ${m.broken.map((b) => `\\`${b.id}\\` (${b.from})`).join(', ')}`);\n    const d = m.drift;"
+          },
+          "narrativeHash": "9818d2d93991"
+        }
+      ],
+      "tree": [
+        {
+          "ref": "3a",
+          "children": [
+            {
+              "ref": "3b",
+              "via": "base, range",
+              "children": [
+                {
+                  "ref": "3c",
+                  "via": "spawn git",
+                  "children": [
+                    {
+                      "label": "por cada línea: +++ fija archivo actual",
+                      "via": "stdout",
+                      "children": [
+                        {
+                          "ref": "3d",
+                          "via": "@@ hunk",
+                          "children": [
+                            {
+                              "ref": "3e",
+                              "via": "count === 0"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "label": "por cada mapa → traza → ubicación en archivo cambiado",
+              "via": "Map<archivo, Set<línea>>",
+              "children": [
+                {
+                  "ref": "3f",
+                  "via": "líneas del archivo",
+                  "children": [
+                    {
+                      "ref": "3g",
+                      "via": "idx ancla",
+                      "children": [
+                        {
+                          "ref": "3h",
+                          "via": "indentación"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "ref": "3i",
+                  "via": "[desde, hasta]"
+                }
+              ]
+            },
+            {
+              "ref": "3j",
+              "via": "doc.id",
+              "children": [
+                {
+                  "ref": "3k",
+                  "via": "touched, broken, narrative"
+                }
+              ]
+            },
+            {
+              "ref": "3l",
+              "via": "maps[]"
+            }
+          ]
+        }
+      ],
+      "narrativeHash": "d1606b24ba0e"
+    },
+    {
+      "id": "4",
+      "title": "Diff en PRs: renderDiff, CLI/MCP y GitHub Action",
+      "description": "Cómo el reporte de diffMaps se convierte en markdown y llega al terminal, al agente MCP y al comentario del PR.",
+      "diagramTitle": "Del reporte de impacto al comentario del PR",
+      "motivation": "Calcular qué nodos toca un cambio solo sirve si alguien lo ve en el momento justo: el desarrollador en su terminal, el agente que está editando código y el revisor que abre el PR. Por eso el mismo reporte se expone por tres puertas (CLI, MCP y GitHub Action) y todas comparten un único renderizador de markdown, para que el mensaje sea idéntico donde se lea. La CLI además puede fallar el build si el cambio rompe anclas o deja prosa desfasada.",
+      "details": "Todo empieza con un reporte ya calculado (traza 3) que `renderDiff` [4a] transforma en markdown. Si ningún mapa se ve afectado, devuelve un mensaje corto con el número de archivos cambiados [4b]; si no, recorre cada mapa y arma una tabla de nodos tocados [4c], una advertencia de anclas rotas [4d], una línea de prosa por revisar a partir de la deriva narrativa [4e] y cierra con la sugerencia de `/waymark refresh` [4f].\n\nLa CLI expone esto con `case 'diff'` [4g]: llama a diffMaps con la base (por defecto `HEAD`) y `--range`, imprime markdown o JSON [4h] y, si se pasó `--fail-on touched|broken|drift`, marca `process.exitCode = 1` [4i] para que un pipeline pueda bloquear el merge.\n\nPara agentes, la tool MCP `waymark_diff` [4j] acepta `base`, `range` y `format` y su handler [4k] reutiliza exactamente diffMaps + renderDiff, de modo que el agente ve lo mismo que el humano.\n\nFinalmente el workflow `waymark-pr.yml` ejecuta la CLI contra `origin/<base_ref>` con `--range` y guarda el markdown en un archivo [4l]; luego `gh pr comment --edit-last` actualiza el comentario anterior o, si no existe, crea uno nuevo [4m], evitando llenar el PR de comentarios repetidos.",
+      "locations": [
+        {
+          "id": "4a",
+          "title": "renderDiff",
+          "description": "Punto único que convierte el reporte de impacto en markdown.",
+          "explanation": "Aquí llega el reporte que produjo diffMaps: la base, los archivos cambiados y la lista de mapas afectados. renderDiff no recalcula nada; solo decide cómo contarlo en markdown. Es la misma función que usan la CLI [4g], la tool MCP [4k] y, a través de la CLI, la GitHub Action [4l]. Mantenerla pura (reporte → string) hace que el texto sea idéntico en todos los canales y fácil de probar.",
+          "path": "src/diff.js",
+          "lineNumber": 75,
+          "lineContent": "export function renderDiff(rep) {",
+          "symbol": "renderDiff",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "4835549f0f8c",
+          "snippet": {
+            "startLine": 72,
+            "code": "}\n\n/** Markdown for PR comments / terminals. */\nexport function renderDiff(rep) {\n  if (!rep.maps.length) return `### Waymark\\n\\nNo documented flow is affected by these changes (${rep.files.length} file(s) changed).`;\n  const o = ['### Waymark — documented flows affected by this change', ''];\n  for (const m of rep.maps) {\n    o.push(`**${m.title}** (\\`${m.id}\\`)`);\n    if (m.touched.length) {\n      o.push('', '| Node | Location | Changed lines |', '|---|---|---|');\n      for (const t of m.touched) o.push(`| \\`${t.id}\\` ${t.title} | \\`${t.path}:${t.from}-${t.to}\\` | ${t.lines} |`);\n    }\n    if (m.broken.length) o.push('', `⚠ Anchors no longer found: ${m.broken.map((b) => `\\`${b.id}\\` (${b.from})`).join(', ')}`);\n    const d = m.drift;\n    if (d.stale) {\n      const parts = [];\n      if (d.nodes.length) parts.push(`nodes ${d.nodes.map((n) => `\\`${n}\\``).join(', ')}`);\n      if (d.traces.length) parts.push(`trace guides ${d.traces.join(', ')}`);"
+          },
+          "narrativeHash": "4835549f0f8c"
+        },
+        {
+          "id": "4b",
+          "title": "Sin flujos afectados",
+          "description": "Mensaje breve cuando ningún mapa se ve afectado.",
+          "explanation": "Si diffMaps no encontró mapas tocados, rotos ni con deriva, se devuelve un aviso corto con el conteo de archivos cambiados. Así el comentario del PR sigue existiendo y confirma que Waymark revisó el cambio, en lugar de quedar en silencio. Es un retorno temprano: el resto de la función solo corre cuando hay algo que mostrar.",
+          "path": "src/diff.js",
+          "lineNumber": 76,
+          "lineContent": "if (!rep.maps.length) return `### Waymark\\n\\nNo documented flow is affected by these changes (${rep.files.length} file(s) changed).`;",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "ccf2f36a78e4",
+          "snippet": {
+            "startLine": 73,
+            "code": "\n/** Markdown for PR comments / terminals. */\nexport function renderDiff(rep) {\n  if (!rep.maps.length) return `### Waymark\\n\\nNo documented flow is affected by these changes (${rep.files.length} file(s) changed).`;\n  const o = ['### Waymark — documented flows affected by this change', ''];\n  for (const m of rep.maps) {\n    o.push(`**${m.title}** (\\`${m.id}\\`)`);\n    if (m.touched.length) {\n      o.push('', '| Node | Location | Changed lines |', '|---|---|---|');\n      for (const t of m.touched) o.push(`| \\`${t.id}\\` ${t.title} | \\`${t.path}:${t.from}-${t.to}\\` | ${t.lines} |`);\n    }\n    if (m.broken.length) o.push('', `⚠ Anchors no longer found: ${m.broken.map((b) => `\\`${b.id}\\` (${b.from})`).join(', ')}`);\n    const d = m.drift;\n    if (d.stale) {\n      const parts = [];\n      if (d.nodes.length) parts.push(`nodes ${d.nodes.map((n) => `\\`${n}\\``).join(', ')}`);\n      if (d.traces.length) parts.push(`trace guides ${d.traces.join(', ')}`);\n      if (d.story) parts.push('the story');"
+          },
+          "narrativeHash": "ccf2f36a78e4"
+        },
+        {
+          "id": "4c",
+          "title": "Tabla de nodos tocados",
+          "description": "Una fila por nodo cuyo bloque de código intersecta líneas cambiadas.",
+          "explanation": "Por cada mapa con nodos tocados se escribe una tabla markdown: id y título del nodo, el rango de código que lo representa (`path:from-to`) y cuántas líneas cambiadas cayeron dentro. El rango viene ya calculado en `touched`, así que aquí solo se formatea. Para un revisor es la parte más útil: le dice qué paso documentado del flujo está modificando el PR.",
+          "path": "src/diff.js",
+          "lineNumber": 82,
+          "lineContent": "for (const t of m.touched) o.push(`| \\`${t.id}\\` ${t.title} | \\`${t.path}:${t.from}-${t.to}\\` | ${t.lines} |`);",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "9cb9c2c8b80e",
+          "snippet": {
+            "startLine": 79,
+            "code": "    o.push(`**${m.title}** (\\`${m.id}\\`)`);\n    if (m.touched.length) {\n      o.push('', '| Node | Location | Changed lines |', '|---|---|---|');\n      for (const t of m.touched) o.push(`| \\`${t.id}\\` ${t.title} | \\`${t.path}:${t.from}-${t.to}\\` | ${t.lines} |`);\n    }\n    if (m.broken.length) o.push('', `⚠ Anchors no longer found: ${m.broken.map((b) => `\\`${b.id}\\` (${b.from})`).join(', ')}`);\n    const d = m.drift;\n    if (d.stale) {\n      const parts = [];\n      if (d.nodes.length) parts.push(`nodes ${d.nodes.map((n) => `\\`${n}\\``).join(', ')}`);\n      if (d.traces.length) parts.push(`trace guides ${d.traces.join(', ')}`);\n      if (d.story) parts.push('the story');\n      o.push('', `◔ Prose to review (code changed since it was written): ${parts.join('; ')}.`);\n    }\n    o.push('', `→ \\`/waymark refresh ${m.id}\\` updates the map.`, '');\n  }\n  return o.join('\\n');\n}"
+          },
+          "narrativeHash": "9cb9c2c8b80e"
+        },
+        {
+          "id": "4d",
+          "title": "Anclas rotas",
+          "description": "Advierte de nodos cuyo ancla ya no se encuentra en el código.",
+          "explanation": "Si la verificación del mapa marcó ubicaciones como `unresolved` o `missing`, se agrega una línea con ⚠ listando cada id y su ubicación original. Es la señal más grave: el mapa apunta a código que ya no existe tal cual. Esta misma condición es la que la CLI puede usar para fallar con `--fail-on broken` [4i].",
+          "path": "src/diff.js",
+          "lineNumber": 84,
+          "lineContent": "if (m.broken.length) o.push('', `⚠ Anchors no longer found: ${m.broken.map((b) => `\\`${b.id}\\` (${b.from})`).join(', ')}`);",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "494734466e65",
+          "snippet": {
+            "startLine": 81,
+            "code": "      o.push('', '| Node | Location | Changed lines |', '|---|---|---|');\n      for (const t of m.touched) o.push(`| \\`${t.id}\\` ${t.title} | \\`${t.path}:${t.from}-${t.to}\\` | ${t.lines} |`);\n    }\n    if (m.broken.length) o.push('', `⚠ Anchors no longer found: ${m.broken.map((b) => `\\`${b.id}\\` (${b.from})`).join(', ')}`);\n    const d = m.drift;\n    if (d.stale) {\n      const parts = [];\n      if (d.nodes.length) parts.push(`nodes ${d.nodes.map((n) => `\\`${n}\\``).join(', ')}`);\n      if (d.traces.length) parts.push(`trace guides ${d.traces.join(', ')}`);\n      if (d.story) parts.push('the story');\n      o.push('', `◔ Prose to review (code changed since it was written): ${parts.join('; ')}.`);\n    }\n    o.push('', `→ \\`/waymark refresh ${m.id}\\` updates the map.`, '');\n  }\n  return o.join('\\n');\n}\n"
+          },
+          "narrativeHash": "494734466e65"
+        },
+        {
+          "id": "4e",
+          "title": "Prosa por revisar",
+          "description": "Resume la deriva narrativa: nodos, guías de traza o la historia.",
+          "explanation": "Cuando `drift.stale` es verdadero, se juntan las partes cuya narrativa quedó atrás del código: nodos concretos, guías de traza o la historia general del mapa. El código puede seguir anclado bien y aun así la explicación estar desactualizada; esta línea lo hace visible. Se marca con ◔ para distinguirla del aviso de anclas rotas [4d].",
+          "path": "src/diff.js",
+          "lineNumber": 91,
+          "lineContent": "o.push('', `◔ Prose to review (code changed since it was written): ${parts.join('; ')}.`);",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "beff452b9731",
+          "snippet": {
+            "startLine": 88,
+            "code": "      if (d.nodes.length) parts.push(`nodes ${d.nodes.map((n) => `\\`${n}\\``).join(', ')}`);\n      if (d.traces.length) parts.push(`trace guides ${d.traces.join(', ')}`);\n      if (d.story) parts.push('the story');\n      o.push('', `◔ Prose to review (code changed since it was written): ${parts.join('; ')}.`);\n    }\n    o.push('', `→ \\`/waymark refresh ${m.id}\\` updates the map.`, '');\n  }\n  return o.join('\\n');\n}\n"
+          },
+          "narrativeHash": "beff452b9731"
+        },
+        {
+          "id": "4f",
+          "title": "Sugerir refresh",
+          "description": "Cierra cada mapa con el comando para actualizarlo.",
+          "explanation": "Cada bloque de mapa termina con una acción concreta: `/waymark refresh <id>`. Convierte el reporte de un diagnóstico en una tarea ejecutable para el autor del PR o su agente. Al final, las líneas acumuladas en `o` se unen con saltos de línea y se devuelven.",
+          "path": "src/diff.js",
+          "lineNumber": 93,
+          "lineContent": "o.push('', `→ \\`/waymark refresh ${m.id}\\` updates the map.`, '');",
+          "status": "ok",
+          "fileHash": "700c633f1c1d",
+          "ctxHash": "269aa8785dba",
+          "snippet": {
+            "startLine": 90,
+            "code": "      if (d.story) parts.push('the story');\n      o.push('', `◔ Prose to review (code changed since it was written): ${parts.join('; ')}.`);\n    }\n    o.push('', `→ \\`/waymark refresh ${m.id}\\` updates the map.`, '');\n  }\n  return o.join('\\n');\n}\n"
+          },
+          "narrativeHash": "269aa8785dba"
+        },
+        {
+          "id": "4g",
+          "title": "Comando CLI diff",
+          "description": "La CLI calcula el reporte con la base y --range opcional.",
+          "explanation": "`waymark diff [base]` toma la base del primer argumento (por defecto `HEAD`, es decir, cambios sin commitear) y `--range` para comparar `base...HEAD` como hace un PR. Delega el cálculo en diffMaps (traza 3) y recibe el reporte. Es la puerta que usa tanto el desarrollador en su terminal como la GitHub Action [4l].",
+          "path": "src/cli.js",
+          "lineNumber": 349,
+          "lineContent": "const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "7c7e0f122c92",
+          "snippet": {
+            "startLine": 346,
+            "code": "      return;\n    }\n    case 'diff': {\n      const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });\n      out(opt.format === 'json' ? rep : renderDiff(rep));\n      const f = opt['fail-on'];\n      if (\n        (f === 'touched' && rep.maps.some((m) => m.touched.length)) ||\n        (f === 'broken' && rep.maps.some((m) => m.broken.length)) ||\n        (f === 'drift' && rep.maps.some((m) => m.drift.stale || m.broken.length))\n      ) process.exitCode = 1;\n      return;\n    }\n    case 'exec': {\n      const r = root();\n      const sep = process.argv.indexOf('--');\n      let coverage;\n      let source;"
+          },
+          "narrativeHash": "7c7e0f122c92"
+        },
+        {
+          "id": "4h",
+          "title": "Salida markdown o JSON",
+          "description": "Imprime renderDiff o el reporte crudo con --format json.",
+          "explanation": "Por defecto imprime el markdown de renderDiff [4a], legible en terminal y listo para pegar en un PR. Con `--format json` saca el reporte estructurado para scripts u otras herramientas. La redirección de esta salida a un archivo es justo lo que hace el workflow [4l].",
+          "path": "src/cli.js",
+          "lineNumber": 350,
+          "lineContent": "out(opt.format === 'json' ? rep : renderDiff(rep));",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "45eecd10550c",
+          "snippet": {
+            "startLine": 347,
+            "code": "    }\n    case 'diff': {\n      const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });\n      out(opt.format === 'json' ? rep : renderDiff(rep));\n      const f = opt['fail-on'];\n      if (\n        (f === 'touched' && rep.maps.some((m) => m.touched.length)) ||\n        (f === 'broken' && rep.maps.some((m) => m.broken.length)) ||\n        (f === 'drift' && rep.maps.some((m) => m.drift.stale || m.broken.length))\n      ) process.exitCode = 1;\n      return;\n    }\n    case 'exec': {\n      const r = root();\n      const sep = process.argv.indexOf('--');\n      let coverage;\n      let source;\n      let command = '';"
+          },
+          "narrativeHash": "45eecd10550c"
+        },
+        {
+          "id": "4i",
+          "title": "Fallar el build",
+          "description": "Con --fail-on, marca exitCode 1 según el tipo de impacto.",
+          "explanation": "La opción `--fail-on` permite convertir el reporte en una compuerta de CI: `touched` falla si hay nodos tocados, `broken` si hay anclas rotas y `drift` si hay prosa desfasada o anclas rotas. Se usa `process.exitCode` en lugar de `process.exit` para que la salida ya impresa se vacíe completa. El workflow del PR no pasa esta opción, así que allí el diff solo informa.",
+          "path": "src/cli.js",
+          "lineNumber": 356,
+          "lineContent": ") process.exitCode = 1;",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "d91c75bac35b",
+          "snippet": {
+            "startLine": 353,
+            "code": "        (f === 'touched' && rep.maps.some((m) => m.touched.length)) ||\n        (f === 'broken' && rep.maps.some((m) => m.broken.length)) ||\n        (f === 'drift' && rep.maps.some((m) => m.drift.stale || m.broken.length))\n      ) process.exitCode = 1;\n      return;\n    }\n    case 'exec': {\n      const r = root();\n      const sep = process.argv.indexOf('--');\n      let coverage;\n      let source;\n      let command = '';\n      if (opt.lcov) {\n        coverage = parseLcov(fs.readFileSync(opt.lcov, 'utf8'), r);\n        source = 'lcov';\n        command = opt.lcov;\n      } else if (sep > -1 && process.argv[sep + 1]) {\n        const cmdArgs = process.argv.slice(sep + 1);"
+          },
+          "narrativeHash": "d91c75bac35b"
+        },
+        {
+          "id": "4j",
+          "title": "Registro waymark_diff",
+          "description": "Tool MCP de solo lectura para el impacto de cambios.",
+          "explanation": "El servidor MCP registra `waymark_diff` con un esquema de `base`, `range`, `format` y `root`, y la anota como `readOnlyHint` porque no modifica mapas. Así un agente que está editando código puede preguntar qué flujos documentados está tocando antes de abrir el PR. Su descripción explica la misma semántica de base/range que la CLI [4g].",
+          "path": "src/mcp.js",
+          "lineNumber": 369,
+          "lineContent": "'waymark_diff',",
+          "symbol": "waymark_diff",
+          "status": "ok",
+          "fileHash": "2b0b28761299",
+          "ctxHash": "1b321e47671c",
+          "snippet": {
+            "startLine": 366,
+            "code": "\n  // ---------------- change impact (PRs)\n  server.registerTool(\n    'waymark_diff',\n    {\n      title: 'Impact of changes on the maps',\n      description:\n        'Which map nodes a change set touches (their code blocks intersect changed lines), which anchors it breaks and which prose it leaves outdated. base \"HEAD\" (default) = uncommitted changes; with range=true compares base...HEAD (a branch or PR).',\n      inputSchema: {\n        base: z.string().optional(),\n        range: z.boolean().optional(),\n        format: z.enum(['markdown', 'json']).optional(),\n        root: rootArg,\n      },\n      annotations: { readOnlyHint: true },\n    },\n    safe(async ({ base = 'HEAD', range = false, format = 'markdown', root }) => {\n      const rep = diffMaps(rootOf(root), base, { range });"
+          },
+          "narrativeHash": "1b321e47671c"
+        },
+        {
+          "id": "4k",
+          "title": "Handler MCP",
+          "description": "Reutiliza diffMaps y renderDiff y devuelve texto.",
+          "explanation": "El handler resuelve la raíz, llama a diffMaps con la base y el rango y devuelve el markdown de renderDiff [4a] o el JSON si se pidió. Es el espejo exacto de la CLI [4h], lo que garantiza que el agente y el humano lean el mismo diagnóstico. Va envuelto en `safe`, que convierte excepciones (por ejemplo, una base de git inexistente) en errores de tool.",
+          "path": "src/mcp.js",
+          "lineNumber": 384,
+          "lineContent": "return text(format === 'json' ? rep : renderDiff(rep));",
+          "status": "ok",
+          "fileHash": "2b0b28761299",
+          "ctxHash": "62915b3f0c0e",
+          "snippet": {
+            "startLine": 381,
+            "code": "    },\n    safe(async ({ base = 'HEAD', range = false, format = 'markdown', root }) => {\n      const rep = diffMaps(rootOf(root), base, { range });\n      return text(format === 'json' ? rep : renderDiff(rep));\n    }),\n  );\n\n  // ---------------- verification by execution\n  server.registerTool(\n    'waymark_exec',\n    {\n      title: 'Mark nodes executed by tests',\n      description:\n        'Marks which nodes actually ran, from coverage: pass lcov (path to an lcov.info from any language) or command (a test command run with NODE_V8_COVERAGE, Node/JS only). Results show as ▶ in viewers and in context.',\n      inputSchema: {\n        id: z.string().optional().describe('Map id; omit for all maps'),\n        lcov: z.string().optional(),\n        command: z.string().optional().describe('e.g. \"npm test\"'),"
+          },
+          "narrativeHash": "62915b3f0c0e"
+        },
+        {
+          "id": "4l",
+          "title": "Action ejecuta diff",
+          "description": "En cada PR, corre la CLI contra la rama base con --range.",
+          "explanation": "El workflow se dispara en `pull_request`, hace checkout con `fetch-depth: 0` (necesario para que exista el merge-base) e instala dependencias. Luego invoca la CLI [4g] comparando `origin/<base_ref>...HEAD` y redirige el markdown a `waymark-report.md`. No usa `--fail-on`, por lo que el job nunca bloquea el PR: solo informa.",
+          "path": ".github/workflows/waymark-pr.yml",
+          "lineNumber": 18,
+          "lineContent": "- run: node src/cli.js diff \"origin/${{ github.base_ref }}\" --range > waymark-report.md",
+          "status": "ok",
+          "fileHash": "1d16869d0389",
+          "ctxHash": "0bd8bc4f2aea",
+          "snippet": {
+            "startLine": 15,
+            "code": "        with:\n          node-version: 22\n      - run: npm ci\n      - run: node src/cli.js diff \"origin/${{ github.base_ref }}\" --range > waymark-report.md\n      - name: Comment (updates the previous Waymark comment)\n        env:\n          GH_TOKEN: ${{ github.token }}\n          PR: ${{ github.event.pull_request.number }}\n        run: gh pr comment \"$PR\" --body-file waymark-report.md --edit-last 2>/dev/null || gh pr comment \"$PR\" --body-file waymark-report.md\n"
+          },
+          "narrativeHash": "0bd8bc4f2aea"
+        },
+        {
+          "id": "4m",
+          "title": "Comentar en el PR",
+          "description": "Edita el último comentario o crea uno nuevo con el reporte.",
+          "explanation": "Con el token del job (permiso `pull-requests: write`) se publica el reporte usando `gh`. Primero intenta `--edit-last` para actualizar el comentario anterior y no inundar el PR en cada push; si no hay comentario previo, ese intento falla y el `||` crea uno nuevo. El resultado es un único comentario vivo que refleja el impacto del último commit.",
+          "path": ".github/workflows/waymark-pr.yml",
+          "lineNumber": 23,
+          "lineContent": "run: gh pr comment \"$PR\" --body-file waymark-report.md --edit-last 2>/dev/null || gh pr comment \"$PR\" --body-file waymark-report.md",
+          "status": "ok",
+          "fileHash": "1d16869d0389",
+          "ctxHash": "da6a4ed0ff78",
+          "snippet": {
+            "startLine": 20,
+            "code": "        env:\n          GH_TOKEN: ${{ github.token }}\n          PR: ${{ github.event.pull_request.number }}\n        run: gh pr comment \"$PR\" --body-file waymark-report.md --edit-last 2>/dev/null || gh pr comment \"$PR\" --body-file waymark-report.md\n"
+          },
+          "narrativeHash": "da6a4ed0ff78"
+        }
+      ],
+      "tree": [
+        {
+          "ref": "4a",
+          "via": "recibe reporte de diffMaps",
+          "children": [
+            {
+              "ref": "4b",
+              "via": "maps vacío"
+            },
+            {
+              "label": "por cada mapa afectado",
+              "children": [
+                {
+                  "ref": "4c",
+                  "via": "touched"
+                },
+                {
+                  "ref": "4d",
+                  "via": "broken"
+                },
+                {
+                  "ref": "4e",
+                  "via": "drift.stale"
+                },
+                {
+                  "ref": "4f"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "Canales de salida",
+          "children": [
+            {
+              "ref": "4g",
+              "via": "terminal",
+              "children": [
+                {
+                  "ref": "4h",
+                  "via": "markdown | json"
+                },
+                {
+                  "ref": "4i",
+                  "via": "--fail-on"
+                }
+              ]
+            },
+            {
+              "ref": "4j",
+              "via": "agente",
+              "children": [
+                {
+                  "ref": "4k",
+                  "via": "renderDiff(rep)"
+                }
+              ]
+            },
+            {
+              "label": "GitHub Action (pull_request)",
+              "children": [
+                {
+                  "ref": "4l",
+                  "via": "invoca CLI con --range"
+                },
+                {
+                  "ref": "4m",
+                  "via": "waymark-report.md"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "narrativeHash": "93b915739149"
+    },
+    {
+      "id": "5",
+      "title": "Verificación por ejecución: cobertura V8/lcov a nodos hit/miss",
+      "description": "Cómo Waymark convierte la cobertura de una ejecución de tests (V8 o lcov) en marcas ▶/○ por nodo, persistidas y mostradas en todos los consumidores.",
+      "diagramTitle": "De la cobertura a los nodos ejecutados",
+      "motivation": "Un mapa narrado dice cómo *debería* fluir la ejecución, pero nada garantiza que los tests realmente pasen por esos puntos. La verificación por ejecución cierra ese hueco: toma la cobertura real de una corrida (V8 para Node, lcov para cualquier lenguaje) y marca cada nodo como ejecutado o no, de modo que el lector sepa qué partes del mapa están respaldadas por código que corrió de verdad, y cuándo esa evidencia quedó obsoleta porque el código cambió.",
+      "details": "Hay dos puertas de entrada que hacen lo mismo. La CLI, en `case 'exec'` [5a], acepta `--lcov <archivo>` o un comando tras `--`; la tool MCP `waymark_exec` [5b] recibe `lcov` o `command` como parámetros. En ambos casos el resultado intermedio tiene el mismo formato: un `Map(rutaRelativa → Map(línea → conteo))`.\n\nSi llega un lcov, [5c] `parseLcov` recorre las líneas `SF:`/`DA:` y suma conteos por archivo. Si llega un comando, [5d] `runWithV8Coverage` lo lanza con `NODE_V8_COVERAGE` apuntando a un directorio temporal (los procesos hijos también quedan cubiertos) y luego [5e] `parseV8Dir` traduce los rangos de bytes de V8 a líneas, sondeando el último carácter no blanco de cada línea y dejando que los rangos internos sobrescriban a los externos.\n\nCon la cobertura en mano, [5f] `applyCoverage` elige los mapas objetivo (uno o todos) y para cada uno [5g] `execResults` decide hit/miss por nodo, con un pequeño respaldo de hasta tres líneas para declaraciones no instrumentadas. [5h] `recordExec` guarda en cada ubicación un objeto `exec` con el `ctxHash` vigente, actualiza `meta.exec` con el resumen y reescribe JSON y HTML.\n\nLa lectura pasa siempre por [5i] `execState`, que devuelve `hit`, `miss`, `unknown` o `stale` (si el `ctxHash` cambió desde la corrida). El HTML precalcula estos estados en [5j], el visor pinta la insignia ▶/○ en [5k], y la extensión de VS Code replica la misma regla sin dependencias en [5l].",
+      "locations": [
+        {
+          "id": "5a",
+          "title": "CLI exec",
+          "description": "La CLI elige lcov o comando con V8 y aplica la cobertura.",
+          "explanation": "Aquí empieza todo cuando alguien escribe `waymark exec`. Si viene `--lcov`, lee el archivo y lo pasa a [5c]; si hay un comando después de `--`, lo ejecuta con [5d] y avisa si terminó con error, aunque la cobertura se aplica igual. Un id de mapa opcional antes de `--` restringe el alcance a un solo mapa. Al final llama a [5f] e imprime por mapa cuántos nodos se ejecutaron, cuántos no y cuántos quedaron sin cobertura.",
+          "path": "src/cli.js",
+          "lineNumber": 359,
+          "lineContent": "case 'exec': {",
+          "symbol": "main",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "accf54859b4e",
+          "snippet": {
+            "startLine": 356,
+            "code": "      ) process.exitCode = 1;\n      return;\n    }\n    case 'exec': {\n      const r = root();\n      const sep = process.argv.indexOf('--');\n      let coverage;\n      let source;\n      let command = '';\n      if (opt.lcov) {\n        coverage = parseLcov(fs.readFileSync(opt.lcov, 'utf8'), r);\n        source = 'lcov';\n        command = opt.lcov;\n      } else if (sep > -1 && process.argv[sep + 1]) {\n        const cmdArgs = process.argv.slice(sep + 1);\n        command = cmdArgs.join(' ');\n        out(`waymark: running ${command} with V8 coverage…`);\n        const res = runWithV8Coverage(r, cmdArgs[0], cmdArgs.slice(1));"
+          },
+          "narrativeHash": "accf54859b4e"
+        },
+        {
+          "id": "5b",
+          "title": "MCP waymark_exec",
+          "description": "Tool MCP equivalente para agentes: lcov o command.",
+          "explanation": "Es la misma operación que [5a] pero expuesta a agentes por MCP. Recibe `lcov` (ruta a un lcov.info) o `command` (por ejemplo `npm test`), que se trocea por espacios y se lanza con [5d]. Sin ninguno de los dos lanza un error explícito. Devuelve como texto el resumen de [5f], así el agente ve de inmediato el resultado por mapa.",
+          "path": "src/mcp.js",
+          "lineNumber": 390,
+          "lineContent": "'waymark_exec',",
+          "status": "ok",
+          "fileHash": "2b0b28761299",
+          "ctxHash": "70c773eee1c1",
+          "snippet": {
+            "startLine": 387,
+            "code": "\n  // ---------------- verification by execution\n  server.registerTool(\n    'waymark_exec',\n    {\n      title: 'Mark nodes executed by tests',\n      description:\n        'Marks which nodes actually ran, from coverage: pass lcov (path to an lcov.info from any language) or command (a test command run with NODE_V8_COVERAGE, Node/JS only). Results show as ▶ in viewers and in context.',\n      inputSchema: {\n        id: z.string().optional().describe('Map id; omit for all maps'),\n        lcov: z.string().optional(),\n        command: z.string().optional().describe('e.g. \"npm test\"'),\n        root: rootArg,\n      },\n    },\n    safe(async ({ id, lcov, command, root }) => {\n      const r = rootOf(root);\n      let coverage;"
+          },
+          "narrativeHash": "70c773eee1c1"
+        },
+        {
+          "id": "5c",
+          "title": "parseLcov",
+          "description": "Convierte lcov.info en mapa archivo → línea → conteo.",
+          "explanation": "lcov es el formato común que emiten Jest, c8, coverage.py o conversores de JaCoCo, así que esta función abre Waymark a cualquier lenguaje. Cada `SF:` fija el archivo actual, normalizado a ruta relativa a la raíz; cada `DA:línea,conteo` suma al contador de esa línea; `end_of_record` cierra el bloque. Los archivos fuera del repositorio se ignoran porque `relPath` no devuelve nada. El resultado tiene el mismo formato que [5e], así que el resto del flujo no distingue el origen.",
+          "path": "src/coverage.js",
+          "lineNumber": 19,
+          "lineContent": "export function parseLcov(text, root) {",
+          "symbol": "parseLcov",
+          "status": "ok",
+          "fileHash": "286b18309e5b",
+          "ctxHash": "004f74464ba5",
+          "snippet": {
+            "startLine": 16,
+            "code": " */\n\n/** Parses lcov.info → Map(relPath → Map(line → count)). */\nexport function parseLcov(text, root) {\n  const out = new Map();\n  let cur = null;\n  for (const raw of text.split(/\\r?\\n/)) {\n    const line = raw.trim();\n    if (line.startsWith('SF:')) {\n      const file = line.slice(3);\n      const rel = relPath(root, path.isAbsolute(file) ? file : path.resolve(root, file));\n      cur = rel ? (out.get(rel) || out.set(rel, new Map()).get(rel)) : null;\n    } else if (line.startsWith('DA:') && cur) {\n      const [ln, count] = line.slice(3).split(',');\n      cur.set(Number(ln), (cur.get(Number(ln)) || 0) + Number(count));\n    } else if (line === 'end_of_record') {\n      cur = null;\n    }"
+          },
+          "narrativeHash": "004f74464ba5"
+        },
+        {
+          "id": "5d",
+          "title": "runWithV8Coverage",
+          "description": "Ejecuta el comando con NODE_V8_COVERAGE y parsea el resultado.",
+          "explanation": "Crea un directorio temporal y lanza el comando con `NODE_V8_COVERAGE` apuntando ahí, de modo que Node (y sus procesos hijos) vuelquen su cobertura nativa sin instalar nada. Los nombres como `npm` se resuelven con `resolveCommand` para manejar los shims de Windows. Al terminar pasa el directorio a [5e] y lo borra en el `finally`, devolviendo también el código de salida.",
+          "path": "src/coverage.js",
+          "lineNumber": 93,
+          "lineContent": "export function runWithV8Coverage(root, command, args) {",
+          "symbol": "runWithV8Coverage",
+          "status": "ok",
+          "fileHash": "286b18309e5b",
+          "ctxHash": "fe18fdea6c67",
+          "snippet": {
+            "startLine": 90,
+            "code": "}\n\n/** Runs a command with V8 coverage enabled (children included) and returns the parsed coverage. */\nexport function runWithV8Coverage(root, command, args) {\n  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'waymark-v8-'));\n  // Absolute executables run directly; names like \"npm\" go through resolveCommand (Windows shims).\n  const bin = fs.existsSync(command) ? { command, args: [] } : resolveCommand(command) || { command, args: [], shell: process.platform === 'win32' };\n  const res = spawnSync(bin.command, argsFor(bin, args), {\n    cwd: root,\n    stdio: 'inherit',\n    shell: !!bin.shell,\n    env: { ...process.env, NODE_V8_COVERAGE: dir },\n  });\n  try {\n    return { status: res.status, coverage: parseV8Dir(dir, root) };\n  } finally {\n    fs.rmSync(dir, { recursive: true, force: true });\n  }"
+          },
+          "narrativeHash": "fe18fdea6c67"
+        },
+        {
+          "id": "5e",
+          "title": "parseV8Dir",
+          "description": "Traduce rangos de bytes V8 a conteos por línea.",
+          "explanation": "V8 reporta rangos de offsets por función, no líneas, así que hay que traducirlos. Para cada línea toma como sonda su último carácter no blanco (en `export function f() {` eso cae en la `{`, dentro del rango de la función). Ordena los rangos de mayor a menor para que los internos, más específicos, sobrescriban a los externos. Descarta `node_modules` y archivos fuera del repo, y suma conteos si varios procesos cargaron el mismo archivo.",
+          "path": "src/coverage.js",
+          "lineNumber": 39,
+          "lineContent": "export function parseV8Dir(dir, root) {",
+          "symbol": "parseV8Dir",
+          "status": "ok",
+          "fileHash": "286b18309e5b",
+          "ctxHash": "86c5e4591fac",
+          "snippet": {
+            "startLine": 36,
+            "code": "}\n\n/** Reads a NODE_V8_COVERAGE directory → Map(relPath → Map(line → count)). Block-level ranges. */\nexport function parseV8Dir(dir, root) {\n  const out = new Map();\n  for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.json'))) {\n    let json;\n    try {\n      json = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));\n    } catch {\n      continue;\n    }\n    for (const script of json.result || []) {\n      if (!script.url || !script.url.startsWith('file:')) continue;\n      let abs;\n      try {\n        abs = fileURLToPath(script.url);\n      } catch {"
+          },
+          "narrativeHash": "86c5e4591fac"
+        },
+        {
+          "id": "5f",
+          "title": "applyCoverage",
+          "description": "Elige mapas objetivo y persiste resultados de cada uno.",
+          "explanation": "Es el pegamento compartido por [5a] y [5b]. Si se pidió un id lo carga; si no, recorre todos los mapas del repositorio. Para cada uno calcula los veredictos con [5g] y los guarda con [5h], devolviendo la lista de resúmenes que la CLI imprime o el MCP devuelve.",
+          "path": "src/coverage.js",
+          "lineNumber": 129,
+          "lineContent": "export function applyCoverage(root, coverage, { ids = null, source = 'coverage', command = '' } = {}) {",
+          "symbol": "applyCoverage",
+          "status": "ok",
+          "fileHash": "286b18309e5b",
+          "ctxHash": "fc13e9016844",
+          "snippet": {
+            "startLine": 126,
+            "code": "}\n\n/** Applies coverage to the given maps (or all) and persists node exec state. */\nexport function applyCoverage(root, coverage, { ids = null, source = 'coverage', command = '' } = {}) {\n  const targets = ids && ids.length ? ids.map((i) => loadMap(root, i).id) : listMaps(root).map((m) => m.id);\n  return targets.map((id) => recordExec(root, id, execResults(loadMap(root, id), coverage), { source, command }));\n}\n"
+          },
+          "narrativeHash": "fc13e9016844"
+        },
+        {
+          "id": "5g",
+          "title": "execResults",
+          "description": "Decide hit o miss por nodo según su línea ancla.",
+          "explanation": "Recorre cada ubicación del mapa y busca el conteo de su línea en la cobertura. Como las declaraciones a veces no son sentencias instrumentadas, prueba hasta tres líneas siguientes antes de rendirse. Si el archivo no tiene cobertura o ninguna línea cercana está instrumentada, el nodo queda fuera del resultado: será `unknown`, no `miss`. Esa distinción evita acusar de 'no ejecutado' a código que la herramienta simplemente no midió.",
+          "path": "src/coverage.js",
+          "lineNumber": 111,
+          "lineContent": "export function execResults(doc, coverage) {",
+          "symbol": "execResults",
+          "status": "ok",
+          "fileHash": "286b18309e5b",
+          "ctxHash": "8ce6750ce696",
+          "snippet": {
+            "startLine": 108,
+            "code": "}\n\n/** Node-level verdicts for one map: hit if the anchor line ran; miss if instrumented but 0. */\nexport function execResults(doc, coverage) {\n  const results = {};\n  for (const t of doc.traces) {\n    for (const l of t.locations) {\n      const lines = coverage.get(l.path);\n      if (!lines) continue;\n      // Declarations (e.g. \"export function f() {\") may not be a counted statement themselves;\n      // fall back to the first instrumented line of the node's next few lines.\n      let count = lines.get(l.lineNumber);\n      for (let k = 1; count == null && k <= 3; k++) count = lines.get(l.lineNumber + k);\n      if (count == null) continue;\n      results[l.id] = { hit: count > 0, count };\n    }\n  }\n  return results;"
+          },
+          "narrativeHash": "8ce6750ce696"
+        },
+        {
+          "id": "5h",
+          "title": "recordExec",
+          "description": "Guarda exec por nodo con ctxHash y regenera JSON y HTML.",
+          "explanation": "Primero refresca los `ctxHash` del mapa para que la marca quede atada al código tal como está ahora. Luego, por cada nodo, guarda `{ hit, count, at, source, ctxHash }` o borra un `exec` previo si no hubo cobertura. El resumen hit/miss/unknown va a `meta.exec` junto con el origen y el comando, y finalmente se persiste el JSON y se reescribe el visor HTML. Ese `ctxHash` es lo que luego permite a [5i] detectar evidencia vieja.",
+          "path": "src/store.js",
+          "lineNumber": 178,
+          "lineContent": "export function recordExec(root, id, results, { source = 'coverage', command = '' } = {}) {",
+          "symbol": "recordExec",
+          "status": "ok",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "e1a483ff830e",
+          "snippet": {
+            "startLine": 175,
+            "code": "}\n\n/** Stores execution results ({ nodeId: { hit, count } }) from coverage. */\nexport function recordExec(root, id, results, { source = 'coverage', command = '' } = {}) {\n  const doc = loadMap(root, id);\n  refreshContextHashes(root, doc);\n  const at = new Date().toISOString();\n  const sum = { hit: 0, miss: 0, unknown: 0 };\n  for (const t of doc.traces) {\n    for (const l of t.locations) {\n      const r = results[l.id];\n      if (!r) {\n        delete l.exec;\n        sum.unknown++;\n        continue;\n      }\n      l.exec = { hit: r.hit, count: r.count, at, source, ctxHash: l.ctxHash };\n      sum[r.hit ? 'hit' : 'miss']++;"
+          },
+          "narrativeHash": "e1a483ff830e"
+        },
+        {
+          "id": "5i",
+          "title": "execState",
+          "description": "Deriva hit, miss, unknown o stale de un nodo.",
+          "explanation": "Es la única regla de lectura: sin `exec` el nodo es `unknown`; si el `ctxHash` guardado ya no coincide con el actual, es `stale` porque el código cambió desde la corrida; si no, `hit` o `miss`. Vive en un módulo sin dependencias para que renderers y visor la compartan. Gracias a ella nunca se muestra un ▶ sobre código que ya no es el que se ejecutó.",
+          "path": "src/state.js",
+          "lineNumber": 18,
+          "lineContent": "export function execState(l) {",
+          "symbol": "execState",
+          "status": "ok",
+          "fileHash": "5663d59cddad",
+          "ctxHash": "9659dce25658",
+          "snippet": {
+            "startLine": 15,
+            "code": "}\n\n/** hit | miss | unknown | stale (code changed since coverage was taken). */\nexport function execState(l) {\n  if (!l.exec) return 'unknown';\n  if (l.exec.ctxHash !== l.ctxHash) return 'stale';\n  return l.exec.hit ? 'hit' : 'miss';\n}\n"
+          },
+          "narrativeHash": "9659dce25658"
+        },
+        {
+          "id": "5j",
+          "title": "Estados precalculados HTML",
+          "description": "El HTML incrusta el estado exec de cada nodo.",
+          "explanation": "Al generar el visor, el servidor calcula `execState` [5i] para cada nodo y lo guarda en `states` dentro de los datos incrustados. Así el navegador no necesita recalcular hashes. Lo mismo hace el renderer markdown para agentes, que añade la marca '▶ executed by the tests' junto al nodo.",
+          "path": "src/render/html.js",
+          "lineNumber": 32,
+          "lineContent": "doc.traces.flatMap((t) => t.locations.map((l) => [l.id, { check: checkState(l), exec: execState(l) }])),",
+          "symbol": "renderHtml",
+          "status": "ok",
+          "fileHash": "8417b34b8047",
+          "ctxHash": "9db4caf1c6ab",
+          "snippet": {
+            "startLine": 29,
+            "code": "    maps,\n    // Precomputed per-node state (fact-check verdict validity needs hashes the browser can't do sync).\n    states: Object.fromEntries(\n      doc.traces.flatMap((t) => t.locations.map((l) => [l.id, { check: checkState(l), exec: execState(l) }])),\n    ),\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    // Smaller context blocks for \"copy trace / node as context\".\n    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),\n    nodeMd: Object.fromEntries(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, renderMarkdown(doc, { node: l.id })]))),\n    mermaid: renderMermaid({ ...doc, diagram: undefined }),\n  };\n  return `<!doctype html>\n<html lang=\"${escHtml(doc.language || 'en')}\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"generator\" content=\"waymark\">\n<title>Waymark · ${escHtml(doc.title)}</title>"
+          },
+          "narrativeHash": "9db4caf1c6ab"
+        },
+        {
+          "id": "5k",
+          "title": "Insignia ▶/○ en visor",
+          "description": "El visor pinta ▶ si se ejecutó y ○ si no.",
+          "explanation": "En el cliente del visor, `badges` lee el estado precalculado en [5j] y añade ▶ con el conteo en el tooltip, o ○ si el nodo no se ejecutó. Los estados `unknown` y `stale` no muestran insignia, para no transmitir una certeza que no existe. Más abajo, `extrasHtml` añade además una línea con el conteo y el origen (v8 o lcov).",
+          "path": "src/render/viewer.client.js",
+          "lineNumber": 55,
+          "lineContent": "if (st.exec === 'hit') h += '<span class=\"st ex\" title=\"Executed by the tests (' + l.exec.count + '×)\">▶</span>';",
+          "symbol": "badges",
+          "status": "ok",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "3037fdb02ff6",
+          "snippet": {
+            "startLine": 52,
+            "code": "    let h = '';\n    const c = CHECK_BADGE[st.check];\n    if (c) h += '<span class=\"st ' + c[0] + '\" title=\"' + esc(c[2] + ((l.check && l.check.issues && l.check.issues.length) ? ': ' + l.check.issues.join('; ') : '')) + '\">' + c[1] + '</span>';\n    if (st.exec === 'hit') h += '<span class=\"st ex\" title=\"Executed by the tests (' + l.exec.count + '×)\">▶</span>';\n    else if (st.exec === 'miss') h += '<span class=\"st nx\" title=\"Not executed by the tests\">○</span>';\n    if (l.mapRef) h += '<span class=\"st mr\" title=\"Detailed map: ' + esc(mapTitle(l.mapRef)) + '\">↗</span>';\n    if (l.notes && l.notes.length) h += '<span class=\"st nt\" title=\"' + l.notes.length + ' team note(s)\">✎</span>';\n    return h;\n  }\n  function mapTitle(ref) {\n    const m = MAPS.get(String(ref).split('#')[0]);\n    return m ? m.title : ref;\n  }\n  function mapHref(ref) {\n    const [id, node] = String(ref).split('#');\n    return id + '.html' + (node ? '#' + node : '');\n  }\n  function extrasHtml(l) {"
+          },
+          "narrativeHash": "3037fdb02ff6"
+        },
+        {
+          "id": "5l",
+          "title": "execState en VS Code",
+          "description": "La extensión replica la regla sin dependencias.",
+          "explanation": "La extensión de VS Code no importa `src/state.js`, así que copia la misma regla de [5i] para mantenerse autocontenida. Cada nodo del modelo lleva `exec` y `execCount`, que luego se muestran como '▶ executed by the tests (N×)' o '○ not executed' en los tooltips. Si cambias la regla en un lado, hay que cambiarla en el otro.",
+          "path": "vscode/lib/model.js",
+          "lineNumber": 84,
+          "lineContent": "function execState(l) {",
+          "symbol": "execState",
+          "status": "ok",
+          "fileHash": "78baee532c18",
+          "ctxHash": "fb312467ec4c",
+          "snippet": {
+            "startLine": 81,
+            "code": "  if (l.check.ctxHash !== l.ctxHash || l.check.proseHash !== sha([l.title, l.description, l.explanation || ''].join('|'))) return 'stale';\n  return l.check.verdict;\n}\nfunction execState(l) {\n  if (!l.exec) return 'unknown';\n  if (l.exec.ctxHash !== l.ctxHash) return 'stale';\n  return l.exec.hit ? 'hit' : 'miss';\n}\n\n/** Index of the node anchored exactly at (path, line) in a given map, else -1. */\nfunction nodeAt(map, relPath, line) {\n  return map.nodes.findIndex((n) => n.path === relPath && n.line === line);\n}\n\n/** Next/previous node in reading order, starting from the node at the cursor or `fromIndex`. */\nfunction step(map, fromIndex, dir) {\n  if (!map.nodes.length) return -1;\n  if (fromIndex < 0) return dir > 0 ? 0 : map.nodes.length - 1;"
+          },
+          "narrativeHash": "fb312467ec4c"
+        }
+      ],
+      "tree": [
+        {
+          "label": "Entradas",
+          "children": [
+            {
+              "ref": "5a",
+              "children": [
+                {
+                  "label": "--lcov <archivo>",
+                  "children": [
+                    {
+                      "ref": "5c",
+                      "via": "texto lcov"
+                    }
+                  ]
+                },
+                {
+                  "label": "-- <comando>",
+                  "children": [
+                    {
+                      "ref": "5d",
+                      "via": "spawn + NODE_V8_COVERAGE",
+                      "children": [
+                        {
+                          "ref": "5e",
+                          "via": "dir temporal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "ref": "5b",
+              "label": "MCP waymark_exec (lcov | command)"
+            }
+          ]
+        },
+        {
+          "ref": "5f",
+          "via": "Map(ruta → línea → conteo)",
+          "children": [
+            {
+              "label": "por cada mapa (id o todos)",
+              "children": [
+                {
+                  "ref": "5g",
+                  "via": "doc + cobertura"
+                },
+                {
+                  "ref": "5h",
+                  "via": "{ nodo: { hit, count } }",
+                  "children": [
+                    {
+                      "label": "persist JSON + writeHtml"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "label": "Lectura del estado",
+          "children": [
+            {
+              "ref": "5i",
+              "via": "l.exec vs ctxHash",
+              "children": [
+                {
+                  "ref": "5j",
+                  "via": "states[id].exec",
+                  "children": [
+                    {
+                      "ref": "5k",
+                      "via": "STATES"
+                    }
+                  ]
+                },
+                {
+                  "label": "renderMarkdown: ▶ executed by the tests"
+                }
+              ]
+            },
+            {
+              "ref": "5l",
+              "label": "copia en vscode/lib/model.js"
+            }
+          ]
+        }
+      ],
+      "narrativeHash": "0611669f720e"
+    }
+  ],
+  "links": [
+    {
+      "from": "1e",
+      "to": "2a",
+      "label": "veredictos del verificador → waymark_record_check"
+    },
+    {
+      "from": "2f",
+      "to": "1k",
+      "label": "checkSummary → resumen impreso por la CLI"
+    },
+    {
+      "from": "3l",
+      "to": "4a",
+      "label": "{ base, range, files, maps } → renderDiff"
+    },
+    {
+      "from": "3l",
+      "to": "4g",
+      "label": "reporte → CLI diff (markdown/JSON, --fail-on)"
+    },
+    {
+      "from": "3j",
+      "to": "2g",
+      "label": "código cambiado → ctxHash distinto → veredicto stale"
+    },
+    {
+      "from": "2g",
+      "to": "5i",
+      "label": "misma regla de caducidad por ctxHash"
+    },
+    {
+      "from": "2l",
+      "to": "5j",
+      "label": "states[id] = { check, exec } en el HTML"
+    }
+  ],
+  "kind": "flow",
+  "narrativeHash": "b3965d301b86",
+  "meta": {
+    "createdAt": "2026-10-20T03:57:03.064Z",
+    "updatedAt": "2026-10-20T03:57:16.309Z",
+    "root": "C:\\DATOS\\codemaps-custom",
+    "commit": "9fce4e38f8797d3e72d7948c3f5e3646a2783d12",
+    "branch": "main",
+    "remote": "https://github.com/h0w4r/waymark",
+    "anchors": {
+      "ok": 60,
+      "moved": 0,
+      "fuzzy": 0,
+      "relocated": 0,
+      "unresolved": 0,
+      "missing": 0
+    },
+    "verifiedAt": "2026-10-20T04:02:57.867Z"
+  }
+}

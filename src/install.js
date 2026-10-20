@@ -24,6 +24,13 @@ const TOOLS = [
   'waymark_get',
   'waymark_verify',
   'waymark_render',
+  'waymark_check',
+  'waymark_record_check',
+  'waymark_diff',
+  'waymark_plan',
+  'waymark_add_trace',
+  'waymark_draft',
+  'waymark_finalize',
 ];
 const AGENT_DESCRIPTION =
   'Waymark agent. Builds a hierarchical, line-anchored map of how code executes for a topic (traces of numbered locations 1a, 1b… with a call tree, guide and shareable HTML viewer). Use when the user asks how something works end-to-end, wants a map/diagram of a flow, before large refactors, or when onboarding to unfamiliar code.';
@@ -32,10 +39,10 @@ const AGENT_RETURN =
 
 // ---------- Claude Code ----------
 
-const CLAUDE_AGENT = () => `---
+const CLAUDE_AGENT = (prefix = 'mcp__waymark__') => `---
 name: waymark
 description: ${AGENT_DESCRIPTION}
-tools: Read, Grep, Glob, ${TOOLS.map((t) => `mcp__waymark__${t}`).join(', ')}
+tools: Read, Grep, Glob, ${TOOLS.map((t) => `${prefix}${t}`).join(', ')}
 ---
 ${MARK}
 ${waymarkGuide('the topic given by the caller')}
@@ -64,6 +71,11 @@ Always pass \`root\` = the absolute path of the current workspace to \`waymark_*
 - **verify [id]** → \`waymark_verify\` with \`fix: true\`; report moved/relocated/broken anchors.
 - **refresh <id>** → bring prose back in sync after code changes: \`waymark_refresh(id)\` lists nodes/guides whose code changed since they were written (and broken anchors); rewrite them with \`waymark_annotate\` or confirm them with \`reviewed\`.
 - **lint [id]** → \`waymark_lint\`; report errors (unknown [refs]) and warnings (missing narrative, uncited nodes…) and offer to fix them.
+- **check <id>** → fact-check the map: delegate to a **fresh** \`waymark\` subagent (it must not be the one that wrote the map) with the procedure from \`waymark_check(id)\`; it fixes wrong prose and records verdicts with \`waymark_record_check\`. Report supported / partial / unsupported.
+- **diff [base]** → \`waymark_diff\` (uncommitted changes by default; \`range: true\` for a branch/PR vs base): which nodes the change touches, which anchors break and which prose goes stale; offer \`refresh\`.
+- **note <id> <node> <text>** → \`waymark_note\` (human knowledge, never rewritten by agents). Only when the user asks.
+- **exec [id]** → mark nodes executed by the tests: \`waymark_exec\` with \`command\` (Node: e.g. "npm test") or \`lcov\` (path to an lcov.info from any language).
+- **overview** → build the "map of maps": \`waymark_start(query, mode: "overview")\`; nodes link to detailed maps with \`mapRef\`; \`kind: "overview"\`.
 - **enrich <id>** → add the storytelling layer to an existing map: \`waymark_enrich(id)\` returns the procedure and what is missing; write the story, Motivation/Details per trace and an explanation per node, save with \`waymark_annotate\`.
 - **from-chat** → build a map of the code paths discussed in this conversation (derive the topic yourself).
 - **anything else** is a topic → create a map (below). \`--fast\` in the text → \`mode: "fast"\`; otherwise \`"smart"\`.
@@ -71,6 +83,7 @@ Always pass \`root\` = the absolute path of the current workspace to \`waymark_*
 ## Create a map
 1. Call \`waymark_start(query, mode)\`: it returns the full Waymark agent procedure (structure **and** storytelling rules), the input format, repo hints and existing maps. Follow it exactly.
    - If subagents are available (Claude Code \`waymark\` agent, Codex \`waymark\` custom agent), delegate the exploration to it.
+   - **Big topics (smart mode, 3+ traces): build in parallel.** \`waymark_start(query, mode: "parallel")\` → \`waymark_plan\` returns one builder prompt per trace → launch one \`waymark\` subagent per trace **in the same message** (they run concurrently; each calls \`waymark_add_trace\`) → read \`waymark_draft\` → \`waymark_finalize\` with the description, story and links.
 2. Explore **read-only** (Read/Grep/Glob, or \`rg\` / \`sed -n\` / \`git grep\` in the shell). Every location must be a line you actually read.
 3. Write the prose as a story for a new teammate, in the user's language: map summary + holistic **story**; per trace **motivation** (why it exists) and **details** (narrative walkthrough citing [1a]); per location a one-line **description** and a 3-6 sentence **explanation**.
 4. Submit with \`waymark_create\`; fix \`unresolved\`/\`missing\` anchors and resubmit with the same \`id\`; fill any missing narrative it reports with \`waymark_annotate\`.
@@ -225,6 +238,45 @@ export function installClaudeHooks(settingsPath, written, { remove = false, useG
 }
 
 /** Packages ../vscode as a VSIX (npx @vscode/vsce) and installs it with the `code` CLI. */
+/**
+ * GitHub Action for a target repo: on every PR, comment which documented flows the change touches.
+ * Runs the CLI straight from GitHub at this version (no npm publish needed).
+ */
+export function installPrAction(target, written) {
+  const version = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'package.json'), 'utf8')).version;
+  const file = path.join(target, '.github', 'workflows', 'waymark-pr.yml');
+  if (fs.existsSync(file) && !fs.readFileSync(file, 'utf8').includes('waymark:managed')) {
+    written.push(`skipped (user-owned): ${file}`);
+    return;
+  }
+  const yml = `# waymark:managed — comments on each pull request with the documented flows it touches.
+name: waymark-pr
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  maps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npx --yes github:h0w4r/waymark#v${version} diff "origin/\${{ github.base_ref }}" --range > waymark-report.md
+      - name: Comment (updates the previous Waymark comment)
+        env:
+          GH_TOKEN: \${{ github.token }}
+          PR: \${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" --body-file waymark-report.md --edit-last 2>/dev/null || gh pr comment "$PR" --body-file waymark-report.md
+`;
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, yml);
+  written.push(`wrote: ${file}`);
+}
+
 export function installVscode(written) {
   const dir = path.join(HERE, '..', 'vscode');
   const npx = resolveCommand('npx');
@@ -232,6 +284,15 @@ export function installVscode(written) {
   if (!npx || !code) {
     written.push(`vscode: skipped (${!npx ? 'npx' : 'code'} not found on PATH)`);
     return;
+  }
+  // The VSIX embeds the bundled library (vscode/dist), produced by scripts/build.mjs.
+  const buildScript = path.join(HERE, '..', 'scripts', 'build.mjs');
+  if (fs.existsSync(buildScript)) {
+    const b = spawnSync(process.execPath, [buildScript], { cwd: path.join(HERE, '..'), encoding: 'utf8' });
+    if (b.status !== 0) {
+      written.push(`vscode: build failed: ${(b.stderr || b.stdout || '').slice(-400)}`);
+      return;
+    }
   }
   const version = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version;
   const vsix = path.join(dir, `waymark-vscode-${version}.vsix`);
@@ -312,6 +373,7 @@ export function install({
   claudeGlobal: claudeGlob = false,
   useGlobalBin = false,
   vscode = false,
+  prAction = false,
 }) {
   const written = [];
   const serverCmd = useGlobalBin ? { command: 'waymark-mcp', args: [] } : { command: 'node', args: [MCP_ENTRY] };
@@ -344,6 +406,7 @@ export function install({
   if (codexGlob) codexGlobal(serverCmd, written);
   if (claudeGlob) claudeGlobal(serverCmd, written, { hooks, useGlobalBin });
   if (vscode) installVscode(written);
+  if (prAction) installPrAction(target, written);
   if (agentsMd) {
     const p = path.join(target, 'AGENTS.md');
     const cur = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
@@ -352,4 +415,9 @@ export function install({
     written.push(`wrote: ${p}`);
   }
   return written.join('\n');
+}
+
+/** Templates for the Claude Code plugin build (scripts/build.mjs). */
+export function pluginTemplates(prefix) {
+  return { skill: SKILL({ claude: true }), agent: CLAUDE_AGENT(prefix) };
 }

@@ -6,3 +6,4 @@ node_modules/
 .agents/
 AGENTS.md
 *.vsix
+vscode/dist/

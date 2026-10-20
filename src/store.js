@@ -1,10 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { normalizeMap } from './schema.js';
+import { normalizeMap, Title } from './schema.js';
 import { anchorMap, safeJoin, FileCache, contextHash, traceHash } from './anchor.js';
 import { headCommit, currentBranch, remoteWebUrl } from './git.js';
-import { renderHtml } from './render/html.js';
+import { renderHtml, renderIndex } from './render/html.js';
+import { execFileSync } from 'node:child_process';
+import { proseHash, checkState } from './state.js';
+export { proseHash, checkState };
 
 export const SCHEMA_VERSION = 1;
 
@@ -34,6 +37,7 @@ export function saveMap(root, input, { id, html = true } = {}) {
   const report = anchorMap(root, map);
   baselineNarrative(map, { force: true });
   const existing = id ? loadMap(root, id, { quiet: true }) : null;
+  if (existing) carryOver(existing, map);
   const now = new Date().toISOString();
   const doc = {
     schemaVersion: SCHEMA_VERSION,
@@ -57,8 +61,141 @@ export function saveMap(root, input, { id, html = true } = {}) {
 
 export function writeHtml(root, doc) {
   const p = filePath(root, doc.id, 'html');
-  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc) }));
+  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc), maps: mapIndex(root, doc.id) }));
+  writeIndex(root);
   return p;
+}
+
+/** Light index of the other maps (for mapRef links between maps). */
+function mapIndex(root, selfId) {
+  return listMaps(root)
+    .filter((m) => m.id !== selfId)
+    .map((m) => ({ id: m.id, title: m.title, kind: m.kind }));
+}
+
+/** .waymark/index.html: every map with its health, linking to each viewer. */
+export function writeIndex(root) {
+  const maps = listMaps(root);
+  if (!maps.length) return null;
+  const p = path.join(mapDir(root), 'index.html');
+  fs.writeFileSync(p, renderIndex(maps, { root }));
+  return p;
+}
+
+/**
+ * Human notes always survive re-creation (matched by node id); fact-check verdicts and
+ * execution results survive only while the node's code block is unchanged.
+ */
+function carryOver(prev, next) {
+  const old = new Map(prev.traces.flatMap((t) => t.locations).map((l) => [l.id, l]));
+  for (const t of next.traces) {
+    const pt = prev.traces.find((x) => x.id === t.id);
+    if (pt?.check && pt.check.hash === traceHash(t)) t.check = pt.check;
+    for (const l of t.locations) {
+      const o = old.get(l.id);
+      if (!o) continue;
+      if (o.notes?.length) l.notes = o.notes;
+      if (o.check && o.check.ctxHash === l.ctxHash && o.check.proseHash === proseHash(l)) l.check = o.check;
+      if (o.exec && o.exec.ctxHash === l.ctxHash) l.exec = o.exec;
+    }
+  }
+}
+
+
+/** Adds (or removes, with remove=index) a human note on a node. Not AI prose: never rewritten by agents. */
+export function noteMap(root, id, nodeId, { text = '', author = '', remove = null } = {}) {
+  const doc = loadMap(root, id);
+  const l = doc.traces.flatMap((t) => t.locations).find((x) => x.id === nodeId);
+  if (!l) throw new Error(`Node "${nodeId}" not found in ${doc.id}`);
+  l.notes = l.notes || [];
+  if (remove != null) {
+    if (!l.notes[remove]) throw new Error(`Note #${remove} not found on [${nodeId}]`);
+    l.notes.splice(remove, 1);
+  } else {
+    if (!String(text).trim()) throw new Error('Empty note');
+    l.notes.push({ text: String(text).trim(), author: author || gitUser(root) || 'unknown', at: new Date().toISOString(), ctxHash: l.ctxHash });
+  }
+  if (!l.notes.length) delete l.notes;
+  doc.meta = { ...doc.meta, updatedAt: new Date().toISOString() };
+  persist(root, doc);
+  writeHtml(root, doc);
+  return { id: doc.id, node: nodeId, notes: l.notes || [] };
+}
+
+function gitUser(root) {
+  try {
+    return execFileSync('git', ['config', 'user.name'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return '';
+  }
+}
+
+const VERDICTS = new Set(['supported', 'partial', 'unsupported']);
+
+/**
+ * Records fact-check verdicts (from a verifier agent). A verdict is tied to the code block and
+ * the prose it judged: editing either makes it "stale" (shown as unchecked).
+ */
+export function recordCheck(root, id, { nodes = [], traces = [], story = null, checker = '' } = {}) {
+  const doc = loadMap(root, id);
+  refreshContextHashes(root, doc);
+  const at = new Date().toISOString();
+  const unknown = [];
+  const byId = new Map(doc.traces.flatMap((t) => t.locations).map((l) => [l.id, l]));
+  for (const v of nodes) {
+    const l = byId.get(v.id);
+    if (!l || !VERDICTS.has(v.verdict)) {
+      unknown.push(v.id);
+      continue;
+    }
+    l.check = { verdict: v.verdict, issues: v.issues || [], at, checker, ctxHash: l.ctxHash, proseHash: proseHash(l) };
+  }
+  for (const v of traces) {
+    const t = doc.traces.find((x) => x.id === String(v.id));
+    if (!t || !VERDICTS.has(v.verdict)) {
+      unknown.push(`trace ${v.id}`);
+      continue;
+    }
+    t.check = { verdict: v.verdict, issues: v.issues || [], at, checker, hash: traceHash(t) };
+  }
+  if (story && VERDICTS.has(story.verdict)) doc.storyCheck = { verdict: story.verdict, issues: story.issues || [], at, checker };
+  doc.meta = { ...doc.meta, updatedAt: at, check: checkSummary(doc) };
+  persist(root, doc);
+  writeHtml(root, doc);
+  return { id: doc.id, unknown, summary: doc.meta.check };
+}
+
+export function checkSummary(doc) {
+  const out = { supported: 0, partial: 0, unsupported: 0, unchecked: 0, stale: 0, total: 0 };
+  for (const t of doc.traces) for (const l of t.locations) {
+    out[checkState(l)]++;
+    out.total++;
+  }
+  return out;
+}
+
+/** Stores execution results ({ nodeId: { hit, count } }) from coverage. */
+export function recordExec(root, id, results, { source = 'coverage', command = '' } = {}) {
+  const doc = loadMap(root, id);
+  refreshContextHashes(root, doc);
+  const at = new Date().toISOString();
+  const sum = { hit: 0, miss: 0, unknown: 0 };
+  for (const t of doc.traces) {
+    for (const l of t.locations) {
+      const r = results[l.id];
+      if (!r) {
+        delete l.exec;
+        sum.unknown++;
+        continue;
+      }
+      l.exec = { hit: r.hit, count: r.count, at, source, ctxHash: l.ctxHash };
+      sum[r.hit ? 'hit' : 'miss']++;
+    }
+  }
+  doc.meta = { ...doc.meta, updatedAt: at, exec: { ...sum, at, source, command } };
+  persist(root, doc);
+  writeHtml(root, doc);
+  return { id: doc.id, ...sum };
 }
 
 const MAX_FILE_BYTES = 512 * 1024;
@@ -141,6 +278,7 @@ export function annotateMap(root, id, patch) {
   let changed = 0;
   const set = (obj, key, val) => {
     if (typeof val === 'string' && obj[key] !== val) {
+      if (key === 'title' || key === 'diagramTitle') Title.parse(val);
       obj[key] = val;
       changed++;
       return true;
@@ -172,6 +310,14 @@ export function annotateMap(root, id, patch) {
       continue;
     }
     for (const k of ['title', 'description', 'explanation']) if (set(l, k, lp[k])) touchedNodes.add(l.id);
+  }
+  if (Array.isArray(patch.links)) {
+    // Cross-trace links are prose too (labels): replace the whole list, validating the ends.
+    const ids = new Set(doc.traces.flatMap((t) => t.locations.map((l) => l.id)));
+    const bad = patch.links.filter((k) => !ids.has(k.from) || !ids.has(k.to));
+    if (bad.length) throw new Error(`Links reference unknown nodes: ${bad.map((k) => `${k.from}->${k.to}`).join(', ')}`);
+    doc.links = patch.links.map(({ from, to, label }) => (label ? { from, to, label } : { from, to }));
+    changed++;
   }
   for (const t of doc.traces) {
     if (t.guide && !t.details) t.details = t.guide;
@@ -234,6 +380,11 @@ export function listMaps(root) {
           updatedAt: d.meta?.updatedAt,
           commit: d.meta?.commit?.slice(0, 8),
           tags: d.tags,
+          kind: d.kind || 'flow',
+          check: checkSummary(d),
+          exec: d.meta?.exec ? { hit: d.meta.exec.hit, miss: d.meta.exec.miss, unknown: d.meta.exec.unknown } : null,
+          drift: narrativeDrift(d).nodes.length,
+          mapRefs: d.traces.flatMap((t) => t.locations).filter((l) => l.mapRef).map((l) => l.mapRef.split('#')[0]),
         };
       } catch {
         return null;

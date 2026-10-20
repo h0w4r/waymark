@@ -51,6 +51,7 @@ export function mapsForFile(root, file, { line = null } = {}) {
           trace: t.id,
           traceTitle: t.title,
           stale: drift.nodes.includes(l.id),
+          notes: l.notes || [],
         });
       }
     }
@@ -87,6 +88,7 @@ function renderMapSection(m, withTrees) {
       if (withTrees) o.push('```text', renderTextTree(t), '```');
       for (const n of m.nodes.filter((x) => x.trace === tid)) {
         o.push(`- [${n.id}] ${n.title} (line ${n.line}) — ${n.description}${n.stale ? ' ⚠ code changed since this node was explained' : ''}`);
+        for (const note of n.notes || []) o.push(`  - Team note (${note.author}): ${note.text}`);
       }
     }
     const near = m.nearest && m.nodes.find((n) => n.id === m.nearest);

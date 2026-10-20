@@ -6,11 +6,15 @@ import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { resolveRoot } from './git.js';
-import { saveMap, loadMap, listMaps, writeHtml, deleteMap, mapDir, annotateMap, narrativeGaps } from './store.js';
+import { saveMap, loadMap, listMaps, writeHtml, deleteMap, mapDir, annotateMap, narrativeGaps, noteMap, checkSummary, writeIndex } from './store.js';
 import { resolveCommand } from './bin.js';
 import { verifyMap } from './verify.js';
 import { suggestTopics } from './suggest.js';
 import { waymarkGuide, enrichGuide, refreshGuide } from './guide.js';
+import { checkGuide, planGuide, traceGuide, finalizeGuide, overviewGuide } from './procedures.js';
+import { listDrafts, loadPlan, draftStatus } from './parallel.js';
+import { diffMaps, renderDiff } from './diff.js';
+import { applyCoverage, parseLcov, runWithV8Coverage } from './coverage.js';
 import { lintMap } from './lint.js';
 import { mapsForFile, renderFileContext } from './context.js';
 import { renderMarkdown } from './render/markdown.js';
@@ -27,6 +31,18 @@ Usage: waymark <command> [options]
   generate "<topic>"     Build a map headlessly with an agent CLI
                          [--engine claude|codex] (default: claude if installed, else codex)
                          [--mode fast|smart] [--model <m>] [--open] [--max-turns <n> (claude)] [--approval <mode> (codex)]
+                         [--parallel [--jobs 4] [--coordinator-model sonnet]]  plan → one agent per trace at once
+                         → finalize (a faster model for plan/finalize cuts the fixed overhead)
+                         [--overview]  map of the whole system whose nodes link to detailed maps
+  check <id>             Fact-check every claim against the code (separate agent), record verdicts
+  note <id> <node> "<text>"   Add a human note to a node [--author <name>] [--remove <index>]
+  notes <id>             List the human notes of a map
+  diff [base]            Nodes touched, anchors broken and prose outdated by a change set
+                         (default: uncommitted vs HEAD) [--range: base...HEAD] [--format markdown|json]
+                         [--fail-on touched|broken|drift]
+  exec [id] (--lcov <file> | -- <test command>)
+                         Mark nodes executed by the tests (LCOV from any language, or V8 for Node)
+  index                  Rebuild .waymark/index.html (list of all maps)
   enrich <id>            Add storytelling (story, Motivation/Details, per-node explanations) to an
                          existing map with an agent CLI [--engine claude|codex] [--model <m>] [--open]
   annotate <id> <patch.json>  Apply prose fields (story, traces[].motivation|details, locations[].explanation)
@@ -53,6 +69,7 @@ Usage: waymark <command> [options]
                          [--global]        both of the above
                          [--global-bin]    use the waymark-mcp bin instead of an absolute path
                          [--vscode]        package and install the VS Code extension (vscode/)
+                         [--pr-action]     add .github/workflows/waymark-pr.yml (PR comment with affected flows)
   mcp                    Run the MCP server on stdio
 
 Global: --root <dir>  repository root (default: git toplevel of cwd)
@@ -66,6 +83,15 @@ const { values: opt, positionals } = parseArgs({
     format: { type: 'string' },
     model: { type: 'string' },
     'max-turns': { type: 'string' },
+    parallel: { type: 'boolean' },
+    jobs: { type: 'string' },
+    'coordinator-model': { type: 'string' },
+    overview: { type: 'boolean' },
+    range: { type: 'boolean' },
+    'fail-on': { type: 'string' },
+    lcov: { type: 'string' },
+    author: { type: 'string' },
+    remove: { type: 'string' },
     engine: { type: 'string' },
     mode: { type: 'string' },
     approval: { type: 'string' },
@@ -84,6 +110,7 @@ const { values: opt, positionals } = parseArgs({
     'no-hooks': { type: 'boolean' },
     'global-bin': { type: 'boolean' },
     vscode: { type: 'boolean' },
+    'pr-action': { type: 'boolean' },
     'no-pull': { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
@@ -100,24 +127,27 @@ function printReport(res) {
   out(`  json: ${res.jsonPath}\n  html: ${res.htmlPath}`);
 }
 
-const MCP_ENTRY = path.join(HERE, 'mcp.js');
+const SELF = fileURLToPath(import.meta.url);
+const BUNDLED = !/[\\/]cli\.js$/.test(SELF);
+const MCP_ARGS = BUNDLED ? [SELF, 'mcp'] : [path.join(HERE, 'mcp.js')];
+const MCP_ENTRY = MCP_ARGS[0];
 const fwd = (p) => p.replace(/\\/g, '/');
 
 /** Claude Code headless: only read tools + waymark MCP are allowed. */
-function claudeInvocation(r, prompt) {
-  const cfgPath = path.join(os.tmpdir(), `waymark-mcp-${process.pid}.json`);
+function claudeInvocation(r, prompt, model = opt.model) {
+  const cfgPath = path.join(os.tmpdir(), `waymark-mcp-${process.pid}-${Math.random().toString(36).slice(2)}.json`);
   fs.writeFileSync(
     cfgPath,
-    JSON.stringify({ mcpServers: { waymark: { command: process.execPath, args: [MCP_ENTRY], env: { WAYMARK_ROOT: r } } } }),
+    JSON.stringify({ mcpServers: { waymark: { command: process.execPath, args: MCP_ARGS, env: { WAYMARK_ROOT: r } } } }),
   );
   const args = ['-p', prompt, '--mcp-config', cfgPath, '--strict-mcp-config', '--allowedTools', 'Read,Grep,Glob,mcp__waymark', '--permission-mode', 'dontAsk'];
-  if (opt.model) args.push('--model', opt.model);
+  if (model) args.push('--model', model);
   if (opt['max-turns']) args.push('--max-turns', opt['max-turns']);
   return { bin: resolveCommand('claude'), args, stdin: null, cleanup: () => fs.rmSync(cfgPath, { force: true }) };
 }
 
 /** Codex headless (codex exec): read-only sandbox; the MCP server (outside the sandbox) does the writing. */
-function codexInvocation(r, prompt) {
+function codexInvocation(r, prompt, model = opt.model) {
   const toml = JSON.stringify;
   const args = [
     'exec',
@@ -126,13 +156,13 @@ function codexInvocation(r, prompt) {
     '--color', 'never',
     '-C', r,
     '-c', `mcp_servers.waymark.command=${toml(fwd(process.execPath))}`,
-    '-c', `mcp_servers.waymark.args=[${toml(fwd(MCP_ENTRY))}]`,
+    '-c', `mcp_servers.waymark.args=[${MCP_ARGS.map((a) => toml(fwd(a))).join(',')}]`,
     '-c', `mcp_servers.waymark.env={WAYMARK_ROOT=${toml(fwd(r))}}`,
     '-c', 'mcp_servers.waymark.startup_timeout_sec=20',
     '-c', 'mcp_servers.waymark.tool_timeout_sec=120',
     '-c', `mcp_servers.waymark.default_tools_approval_mode=${toml(opt['approval'] || 'approve')}`,
   ];
-  if (opt.model) args.push('-m', opt.model);
+  if (model) args.push('-m', model);
   args.push('-'); // prompt from stdin: avoids command-line length/quoting limits
   return { bin: resolveCommand('codex'), args, stdin: prompt, cleanup: () => {} };
 }
@@ -145,26 +175,30 @@ function pickEngine() {
 }
 
 /** Runs Claude Code or Codex headlessly with only read tools + the waymark MCP server. */
-async function runAgent(r, task) {
+async function runAgent(r, task, { log = null, label = '', model = opt.model } = {}) {
   const engine = pickEngine();
   const tools = engine === 'codex' ? 'read-only shell commands (rg, sed -n, git grep, ls)' : 'Read/Grep/Glob';
   const prompt =
     task +
     `\n\nRepository root: ${r}\nWork autonomously: do not ask questions. Explore with ${tools} only. ` +
     `Always pass root="${fwd(r)}" to waymark_* tools. When done, answer with the map id and a short summary.`;
-  const inv = engine === 'codex' ? codexInvocation(r, prompt) : claudeInvocation(r, prompt);
+  const inv = engine === 'codex' ? codexInvocation(r, prompt, model) : claudeInvocation(r, prompt, model);
   if (!inv.bin) throw new Error(`"${engine}" CLI not found on PATH`);
-  out(`waymark: running ${engine}…`);
+  out(`waymark: running ${engine}${label ? ' — ' + label : ''}…`);
+  const fd = log ? fs.openSync(log, 'w') : null;
   const code = await new Promise((res, rej) => {
     const p = spawn(inv.bin.command, [...inv.bin.args, ...inv.args], {
       cwd: r,
-      stdio: [inv.stdin ? 'pipe' : 'ignore', 'inherit', 'inherit'],
+      stdio: [inv.stdin ? 'pipe' : 'ignore', fd ?? 'inherit', fd ?? 'inherit'],
       shell: !!inv.bin.shell,
     });
     p.on('error', (e) => rej(new Error(`Could not run ${engine}: ${e.message}`)));
     p.on('close', res);
     if (inv.stdin) p.stdin.end(inv.stdin);
-  }).finally(inv.cleanup);
+  }).finally(() => {
+    inv.cleanup();
+    if (fd != null) fs.closeSync(fd);
+  });
   return code ?? 1;
 }
 
@@ -173,7 +207,11 @@ async function generate(topic) {
   const r = root();
   const before = new Set(listMaps(r).map((m) => m.id));
   const mode = opt.mode === 'fast' ? 'fast' : 'smart';
-  const code = await runAgent(r, waymarkGuide(topic, { mode }));
+  const t0 = Date.now();
+  const code = opt.parallel
+    ? await generateParallel(r, topic, mode)
+    : await runAgent(r, opt.overview ? overviewGuide(topic) + '\n\n' + waymarkGuide(topic, { mode: 'fast' }) : waymarkGuide(topic, { mode }));
+  out(`waymark: finished in ${Math.round((Date.now() - t0) / 1000)}s`);
   const created = listMaps(r).filter((m) => !before.has(m.id));
   if (created[0]) {
     const html = path.join(mapDir(r), `${created[0].id}.html`);
@@ -185,6 +223,41 @@ async function generate(topic) {
     out('\n(no new map was stored; the agent may have updated an existing one)');
   }
   process.exitCode = code;
+}
+
+/** plan (1 agent) → one builder agent per trace, concurrently → finalize (1 agent). */
+async function generateParallel(r, topic, mode) {
+  const before = new Set(listDrafts(r).map((d) => d.draft));
+  let code = await runAgent(r, planGuide(topic, { mode, kind: opt.overview ? 'overview' : 'flow' }), { label: 'planning', model: opt['coordinator-model'] || opt.model });
+  const draft = listDrafts(r).find((d) => !before.has(d.draft));
+  if (!draft) throw new Error('The planner did not register a plan (waymark_plan).');
+  const plan = loadPlan(r, draft.draft);
+  const jobs = Math.max(1, Number(opt.jobs) || 4);
+  const logDir = path.join(mapDir(r), '.drafts', draft.draft);
+  out(`waymark: plan ${draft.draft} with ${plan.traces.length} traces → ${Math.min(jobs, plan.traces.length)} builders in parallel (logs in ${logDir})`);
+  const queue = [...plan.traces];
+  const worker = async () => {
+    for (let t = queue.shift(); t; t = queue.shift()) {
+      const c = await runAgent(r, traceGuide(draft.draft, t.n, plan), { log: path.join(logDir, `trace-${t.n}.log`), label: `trace ${t.n}: ${t.title}` });
+      out(`waymark: trace ${t.n} ${c === 0 ? 'done' : 'failed (' + c + ')'}`);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(jobs, plan.traces.length) }, worker));
+  const st = draftStatus(r, draft.draft);
+  if (st.missing.length) out(`waymark: traces not built: ${st.missing.join(', ')} (continuing with the rest)`);
+  code = await runAgent(r, finalizeGuide(draft.draft), { label: 'finalizing', model: opt['coordinator-model'] || opt.model });
+  return code;
+}
+
+async function check(id) {
+  if (!id) throw new Error('Usage: waymark check <id> [--engine claude|codex]');
+  const r = root();
+  const doc = loadMap(r, id);
+  const code = await runAgent(r, checkGuide(doc.id) + '\n\nStart by calling waymark_check(id: "' + doc.id + '") to get the map with its code snippets.', { label: 'fact-check' });
+  const s = checkSummary(loadMap(r, doc.id));
+  out(`\nwaymark: ${doc.id} fact-check → ${s.supported} supported, ${s.partial} partial, ${s.unsupported} unsupported, ${s.unchecked + s.stale} unchecked (of ${s.total})`);
+  if (opt.open) openFile(path.join(mapDir(r), `${doc.id}.html`));
+  process.exitCode = code || (s.unsupported ? 1 : 0);
 }
 
 async function enrich(id) {
@@ -231,7 +304,8 @@ async function main() {
     case 'lint': {
       const r = root();
       const ids = rest[0] ? [loadMap(r, rest[0]).id] : listMaps(r).map((m) => m.id);
-      const results = ids.map((i) => lintMap(loadMap(r, i)));
+      const mapIds = new Set(listMaps(r).map((m) => m.id));
+      const results = ids.map((i) => lintMap(loadMap(r, i), { mapIds }));
       if (opt.json) return out(results);
       let bad = false;
       for (const res of results) {
@@ -259,6 +333,58 @@ async function main() {
         }),
       );
     }
+    case 'check':
+      return check(rest[0]);
+    case 'note': {
+      if (!rest[0] || !rest[1]) throw new Error('Usage: waymark note <id> <node> "<text>" [--author <name>] [--remove <index>]');
+      const res = noteMap(root(), rest[0], rest[1], { text: rest.slice(2).join(' '), author: opt.author, remove: opt.remove != null ? Number(opt.remove) : null });
+      return out(`✔ ${res.id} [${res.node}]: ${res.notes.length} note(s)`);
+    }
+    case 'notes': {
+      const doc = loadMap(root(), rest[0]);
+      for (const t of doc.traces) for (const l of t.locations) (l.notes || []).forEach((n, i) => out(`[${l.id}] #${i} ${n.author} ${String(n.at).slice(0, 10)}: ${n.text}`));
+      return;
+    }
+    case 'diff': {
+      const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });
+      out(opt.format === 'json' ? rep : renderDiff(rep));
+      const f = opt['fail-on'];
+      if (
+        (f === 'touched' && rep.maps.some((m) => m.touched.length)) ||
+        (f === 'broken' && rep.maps.some((m) => m.broken.length)) ||
+        (f === 'drift' && rep.maps.some((m) => m.drift.stale || m.broken.length))
+      ) process.exitCode = 1;
+      return;
+    }
+    case 'exec': {
+      const r = root();
+      const sep = process.argv.indexOf('--');
+      let coverage;
+      let source;
+      let command = '';
+      if (opt.lcov) {
+        coverage = parseLcov(fs.readFileSync(opt.lcov, 'utf8'), r);
+        source = 'lcov';
+        command = opt.lcov;
+      } else if (sep > -1 && process.argv[sep + 1]) {
+        const cmdArgs = process.argv.slice(sep + 1);
+        command = cmdArgs.join(' ');
+        out(`waymark: running ${command} with V8 coverage…`);
+        const res = runWithV8Coverage(r, cmdArgs[0], cmdArgs.slice(1));
+        if (res.status) out(`waymark: the command exited with ${res.status} (coverage is still applied)`);
+        coverage = res.coverage;
+        source = 'v8';
+      } else throw new Error('Usage: waymark exec [id] --lcov <lcov.info>   |   waymark exec [id] -- <test command>');
+      // A map id may precede "--": `waymark exec my-map -- npm test`.
+      const head = sep > -1 ? process.argv.slice(process.argv.indexOf('exec') + 1, sep).filter((a) => !a.startsWith('-')) : rest;
+      const ids = head[0] ? [head[0]] : null;
+      for (const x of applyCoverage(r, coverage, { ids, source, command })) {
+        out(`▶ ${x.id}: ${x.hit} executed, ${x.miss} not executed, ${x.unknown} without coverage`);
+      }
+      return;
+    }
+    case 'index':
+      return out(writeIndex(root()) || 'no maps');
     case 'hook': {
       const { runHook } = await import('./hooks.js');
       return runHook(rest[0]);
@@ -340,6 +466,7 @@ async function main() {
           codexGlobal: !!(opt['codex-global'] || opt.global),
           claudeGlobal: !!(opt['claude-global'] || opt.global),
           vscode: !!opt.vscode,
+          prAction: !!opt['pr-action'],
           agentsMd: !opt['no-agents-md'],
           hooks: !opt['no-hooks'],
           useGlobalBin: !!opt['global-bin'],

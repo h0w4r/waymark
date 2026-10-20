@@ -1,0 +1,14 @@
+{
+  "name": "waymark",
+  "owner": { "name": "h0w4r", "url": "https://github.com/h0w4r" },
+  "description": "Waymark: narrated, line-anchored maps of how code executes (open Codemaps alternative).",
+  "plugins": [
+    {
+      "name": "waymark",
+      "source": "./plugin",
+      "description": "Narrated, line-anchored maps of how code executes: traces, storytelling, fact-checking, interactive viewer, drift detection and agent hooks.",
+      "category": "development",
+      "tags": ["codemap", "architecture", "onboarding", "documentation"]
+    }
+  ]
+}

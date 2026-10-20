@@ -42,6 +42,18 @@ Diferencias: no hay panel nativo en el IDE (el visor es HTML + links al editor) 
 
 ## Instalación
 
+### Opción recomendada: plugin de Claude Code (sin clonar nada)
+
+```text
+/plugin install waymark --marketplace h0w4r/waymark
+```
+
+(En versiones anteriores a 2.1.275: `/plugin marketplace add h0w4r/waymark` y luego `/plugin install waymark@waymark`.)
+
+El plugin trae todo empaquetado (servidor MCP, CLI y hooks en `plugin/dist/waymark.mjs`, sin `node_modules`), la skill `/waymark` y el subagente. Se actualiza con `/plugin marketplace update waymark` (o con auto-update). **Usa el plugin o la instalación desde el clon, no ambos** (duplicarías servidor y hooks).
+
+### Desde el clon (desarrollo, Codex, otros harnesses)
+
 ```bash
 git clone https://github.com/h0w4r/waymark.git
 cd waymark && npm install
@@ -139,10 +151,22 @@ npm run vscode:install  # empaqueta vscode/ y ejecuta code --install-extension <
 
 Desinstalar: `code --uninstall-extension h0w4r.waymark-vscode`.
 
+### Canales de distribución
+
+| Canal | Estado | Qué hace falta |
+|---|---|---|
+| Plugin de Claude Code (marketplace en este repo) | ✅ activo | nada |
+| GitHub Releases (`.vsix`) + auto-update de la extensión | ✅ activo | nada |
+| VS Code Marketplace | listo en CI | secreto `VSCE_PAT` (publisher `h0w4r` en marketplace.visualstudio.com + PAT de Azure DevOps con scope *Marketplace › Manage*) |
+| Open VSX (Cursor, Windsurf, VSCodium) | listo en CI | secreto `OVSX_PAT` (cuenta en open-vsx.org + namespace `h0w4r`) |
+| npm (`@h0w4r/waymark`) | listo en CI | secreto `NPM_TOKEN` (token *Automation* de npmjs.com) |
+
+Cada secreto se agrega en GitHub → *Settings › Secrets and variables › Actions*; el siguiente tag publica en ese canal automáticamente.
+
 ### Publicar una versión nueva (mantenedores)
 
 ```bash
-npm run version:set -- 0.3.0           # sube la versión en package.json, vscode/package.json y el servidor MCP
+npm run version:set -- 0.3.0           # versión en package.json, vscode, servidor MCP y plugin (y reconstruye plugin/dist)
 git commit -am "Release v0.3.0"
 git tag v0.3.0
 git push && git push origin v0.3.0
@@ -201,6 +225,41 @@ waymark suggest
 ```
 
 `generate --engine codex` ejecuta `codex exec --sandbox read-only` inyectando el servidor con `-c mcp_servers.waymark.*` (no toca tu config global); el agente sólo lee y el servidor MCP —fuera del sandbox— escribe en `.waymark/`.
+
+### Verificar las afirmaciones (fact-check)
+
+`/waymark check <id>` (o `waymark check <id>`) lanza un agente **distinto** del que escribió el mapa, en modo escéptico: abre el código de cada nodo, contrasta cada afirmación (qué llama a qué, datos, condiciones, efectos), **corrige** la prosa errónea y registra un veredicto por nodo, guía y historia: ✓ `supported`, ◑ `partial` (no verificable desde el código) o ✗ `unsupported`. El veredicto queda atado al código y a la prosa que juzgó: si cualquiera cambia, pasa a "sin verificar". `unsupported` es error de `lint`. En el visor: insignias ✓/◑/✗ y chip "N/M verified".
+
+### Generación en paralelo
+
+`waymark generate "<tema>" --parallel [--jobs 4] [--coordinator-model sonnet]`: un agente planifica las trazas, uno por traza las construye **a la vez** (cada uno con su propio contexto, así cada traza sale más profunda) y un editor final escribe la historia y los enlaces. En Claude Code la skill hace lo mismo con subagentes en paralelo (`waymark_plan` → `waymark_add_trace` × N → `waymark_finalize`). En mapas medianos el tiempo total es similar al secuencial (plan + cierre ≈ 2 min fijos); la ganancia es profundidad y que mapas grandes no saturan el contexto de un solo agente.
+
+### Impacto de cambios y PRs
+
+```bash
+waymark diff                       # cambios sin commitear
+waymark diff origin/main --range   # una rama o PR
+waymark install --pr-action        # .github/workflows/waymark-pr.yml en tu repo
+```
+
+Cruza las líneas cambiadas con el **bloque** de código de cada nodo y lista nodos tocados, anclas rotas y prosa a revisar. La GitHub Action publica (y actualiza) un comentario en cada PR. `--fail-on touched|broken|drift` para usarlo como gate.
+
+### Notas humanas
+
+Conocimiento del equipo que la IA no reescribe nunca: `waymark note <id> <nodo> "texto"`, botón **+ Note** en el visor, *Waymark: Add team note* / hover en VS Code, o `waymark_note`. Sobreviven a que el agente regenere el mapa y aparecen en el contexto que reciben los agentes (incluidos los hooks).
+
+### Verificado por ejecución
+
+```bash
+waymark exec <id> -- npm test               # Node/JS: cobertura V8 (incluye procesos hijos)
+waymark exec <id> --lcov coverage/lcov.info # cualquier lenguaje con LCOV (Jest, coverage.py, JaCoCo…)
+```
+
+Marca qué nodos **se ejecutaron realmente** en los tests (▶) y cuáles no (○). Igual que los veredictos, el resultado caduca si el código del nodo cambia.
+
+### Mapa de mapas
+
+`/waymark overview` o `waymark generate "<tema>" --overview`: un mapa de arquitectura (`kind: "overview"`) cuyos nodos enlazan (`mapRef`) a los mapas detallados; abrirlos es un clic (o doble clic en el diagrama). `.waymark/index.html` lista todos los mapas con su salud (verificados, ejecutados, a revisar), con el overview primero.
 
 ### CI (detectar mapas desactualizados)
 

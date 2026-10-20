@@ -13,6 +13,10 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm ci
+      - run: npm run build
+      # The Claude Code plugin is installed straight from git: its bundle must be committed up to date.
+      - run: git diff --exit-code -- plugin
+        if: matrix.os == 'ubuntu-latest'
       - run: npm test
       # Dogfooding: the example maps in .waymark/ document this repo; fail if they drift.
       - run: node src/cli.js verify --strict

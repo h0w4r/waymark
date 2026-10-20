@@ -39,6 +39,61 @@
   // Embedded in a VS Code webview: talk to the extension instead of opening URLs.
   const host = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
 
+  // Fact-check verdicts, execution results, links between maps, human notes.
+  const STATES = DATA.states || {};
+  const MAPS = new Map((DATA.maps || []).map((m) => [m.id, m]));
+  const CHECK_BADGE = {
+    supported: ['ck ok', '✓', 'Fact-checked: every claim is backed by the code'],
+    partial: ['ck warn', '◑', 'Partially verified'],
+    unsupported: ['ck bad', '✗', 'Fact-check failed'],
+  };
+  function badges(l) {
+    const st = STATES[l.id] || {};
+    let h = '';
+    const c = CHECK_BADGE[st.check];
+    if (c) h += '<span class="st ' + c[0] + '" title="' + esc(c[2] + ((l.check && l.check.issues && l.check.issues.length) ? ': ' + l.check.issues.join('; ') : '')) + '">' + c[1] + '</span>';
+    if (st.exec === 'hit') h += '<span class="st ex" title="Executed by the tests (' + l.exec.count + '×)">▶</span>';
+    else if (st.exec === 'miss') h += '<span class="st nx" title="Not executed by the tests">○</span>';
+    if (l.mapRef) h += '<span class="st mr" title="Detailed map: ' + esc(mapTitle(l.mapRef)) + '">↗</span>';
+    if (l.notes && l.notes.length) h += '<span class="st nt" title="' + l.notes.length + ' team note(s)">✎</span>';
+    return h;
+  }
+  function mapTitle(ref) {
+    const m = MAPS.get(String(ref).split('#')[0]);
+    return m ? m.title : ref;
+  }
+  function mapHref(ref) {
+    const [id, node] = String(ref).split('#');
+    return id + '.html' + (node ? '#' + node : '');
+  }
+  function extrasHtml(l) {
+    const st = STATES[l.id] || {};
+    let h = '';
+    if (l.check && (st.check === 'partial' || st.check === 'unsupported') && l.check.issues && l.check.issues.length) {
+      h += '<div class="ck-issues ' + (st.check === 'unsupported' ? 'bad' : 'warn') + '"><b>' + (st.check === 'unsupported' ? '✗ Fact-check failed' : '◑ Partially verified') + '</b><ul>' + l.check.issues.map((i) => '<li>' + inline(i) + '</li>').join('') + '</ul></div>';
+    } else if (st.check === 'supported') {
+      h += '<div class="ck-issues ok"><b>✓ Fact-checked</b> — every claim was verified against the code' + (l.check.issues && l.check.issues.length ? ' (' + l.check.issues.map(esc).join('; ') + ')' : '') + '</div>';
+    }
+    if (st.exec === 'hit') h += '<div class="ex-line">▶ Executed by the tests (' + l.exec.count + '×, ' + esc(l.exec.source) + ')</div>';
+    else if (st.exec === 'miss') h += '<div class="ex-line nx">○ Not executed by the tests</div>';
+    if (l.mapRef) {
+      h += host
+        ? '<button class="pill maplink" data-open-map="' + esc(l.mapRef) + '">↗ ' + esc(mapTitle(l.mapRef)) + '</button>'
+        : '<a class="pill maplink" href="' + esc(mapHref(l.mapRef)) + '">↗ ' + esc(mapTitle(l.mapRef)) + '</a>';
+    }
+    h += '<div class="notes">' + (l.notes || []).map((n) => '<div class="note-item">✎ ' + inline(n.text) + ' <span class="na">— ' + esc(n.author) + ', ' + esc(String(n.at).slice(0, 10)) + '</span></div>').join('') +
+      '<button class="explain" data-add-note="' + l.id + '" title="Add a team note (not AI-generated)">+ Note</button></div>';
+    return h;
+  }
+  function addNote(id) {
+    if (host) return host.postMessage({ type: 'addNote', id });
+    const text = window.prompt('Team note for [' + id + '] (saved with the CLI):');
+    if (!text) return;
+    const cmd = 'waymark note ' + doc.id + ' ' + id + ' ' + JSON.stringify(text);
+    try { navigator.clipboard.writeText(cmd); } catch (e) { /* no clipboard */ }
+    window.alert('Run this in the repository (copied to the clipboard):\n\n' + cmd);
+  }
+
   const prefsKey = 'waymark:' + doc.id;
   const prefs = Object.assign({ root: meta.root || '', editor: 'vscode', mapW: null, view: 'code' }, safeJson(localStorage.getItem(prefsKey)));
   function safeJson(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
@@ -164,6 +219,15 @@
     const broken = (a.unresolved || 0) + (a.missing || 0);
     if (broken) chips.push('<span class="chip bad">' + broken + ' unverified anchors</span>');
     if (a.fuzzy) chips.push('<span class="chip warn">' + a.fuzzy + ' approximate</span>');
+    const sum = { supported: 0, partial: 0, unsupported: 0, hit: 0, miss: 0 };
+    for (const l of locs) {
+      const st = STATES[l.id] || {};
+      if (sum[st.check] != null) sum[st.check]++;
+      if (sum[st.exec] != null) sum[st.exec]++;
+    }
+    if (sum.supported + sum.partial + sum.unsupported) chips.push('<span class="chip ' + (sum.unsupported ? 'bad' : 'okc') + '" title="Fact-checked nodes">✓ ' + sum.supported + '/' + locs.length + ' verified' + (sum.unsupported ? ' · ' + sum.unsupported + ' unsupported' : '') + '</span>');
+    if (sum.hit + sum.miss) chips.push('<span class="chip okc" title="Nodes executed by the tests">▶ ' + sum.hit + '/' + (sum.hit + sum.miss) + ' executed</span>');
+    if (doc.kind === 'overview') chips.push('<span class="chip okc">overview map</span>');
     if (staleNodes.size) chips.push('<span class="chip warn" title="Code changed after these nodes were explained">' + staleNodes.size + ' explanations to review</span>');
 
     const head =
@@ -189,7 +253,8 @@
           seen.add(l.id);
           const st =
             (STATUS[l.status] ? '<span class="st ' + l.status + '" title="' + esc(l.note || l.status) + '">' + STATUS[l.status] + '</span>' : '') +
-            (staleNodes.has(l.id) ? '<span class="st drift" title="Code changed after this node was explained">◔</span>' : '');
+            (staleNodes.has(l.id) ? '<span class="st drift" title="Code changed after this node was explained">◔</span>' : '') +
+            badges(l);
           inner =
             '<div class="loc" data-id="' + l.id + '" tabindex="0" style="--tc:' + l.trace.color + '">' +
             '<div class="loc-top"><span class="lid">' + l.id + '</span><span class="lt">' + esc(n.label || l.title) + '</span>' + st +
@@ -198,7 +263,7 @@
             '<div class="loc-more"><div class="loc-desc">' + inline(l.description) + '</div>' +
             '<button class="explain" data-explain="' + l.id + '">' + (l.explanation ? 'Show explanation' : 'Explain') + '</button> ' +
             '<button class="explain" data-copy-node="' + l.id + '" title="Copy this node (with its trace context) as markdown for an agent">Copy context</button>' +
-            '<div class="expl md" hidden></div></div></div>';
+            '<div class="expl md" hidden></div>' + extrasHtml(l) + '</div></div>';
         } else {
           inner = '<div class="lbl">' + esc(n.label || '…') + '</div>';
         }
@@ -254,6 +319,10 @@
   }
 
   mapPane.addEventListener('click', (e) => {
+    const an = e.target.closest('[data-add-note]');
+    if (an) { e.stopPropagation(); return addNote(an.dataset.addNote); }
+    const om = e.target.closest('[data-open-map]');
+    if (om) { e.stopPropagation(); return host && host.postMessage({ type: 'openMap', ref: om.dataset.openMap }); }
     const ct = e.target.closest('[data-copy-trace]');
     if (ct) { e.stopPropagation(); return copy(ct, (DATA.traceMd || {})[ct.dataset.copyTrace] || '', '⧉'); }
     const cn = e.target.closest('[data-copy-node]');
@@ -584,7 +653,7 @@
         div.innerHTML =
           (n.stacked && n.via ? '<div class="v">↳ ' + esc(n.via) + '</div>' : '') +
           '<div class="h"><span class="i">' + (n.kind === 'again' ? '↺ ' : '') + n.loc.id + '</span><span class="t">' + esc(n.label) + '</span>' +
-          (staleNodes.has(n.loc.id) ? '<span class="dr" title="Code changed after this node was explained">◔</span>' : '') + '</div>' +
+          (staleNodes.has(n.loc.id) ? '<span class="dr" title="Code changed after this node was explained">◔</span>' : '') + badges(n.loc) + '</div>' +
           '<div class="f">' + esc(base(n.loc.path)) + ':' + n.loc.lineNumber + '</div>';
       }
       if (n.kind === 'label' && n.stacked && n.via) div.insertAdjacentHTML('afterbegin', '<div class="v">↳ ' + esc(n.via) + '</div>');
@@ -779,7 +848,15 @@
   });
   svg.addEventListener('dblclick', (e) => {
     const d = e.target.closest('.dn[data-id]');
-    if (d) { select(d.dataset.id); setView('code'); }
+    if (!d) return;
+    const l = byId.get(d.dataset.id);
+    if (l && l.mapRef) {
+      if (host) host.postMessage({ type: 'openMap', ref: l.mapRef });
+      else location.href = mapHref(l.mapRef);
+      return;
+    }
+    select(d.dataset.id);
+    setView('code');
   });
 
   function relatedKeys(n) {
@@ -832,7 +909,7 @@
       '<div class="ch"><span class="lid">' + l.id + '</span><h3>' + esc(l.title) + '</h3><button class="x" data-close title="Close">×</button></div>' +
       '<div class="where">' + esc(l.path) + ':' + l.lineNumber + '</div>' +
       '<div class="cdesc">' + inline(l.description) + '</div>' +
-      '<div class="expl md" style="--tc:' + l.trace.color + '">' + explanationHtml(l) + '</div>' +
+      '<div class="expl md" style="--tc:' + l.trace.color + '">' + explanationHtml(l) + '</div>' + extrasHtml(l) +
       (snippet ? '<pre>' + snippet + '</pre>' : '') +
       '<div class="acts"><button class="pill" data-open-code>Open in code view</button>' +
       (host ? '<button class="pill" data-open-editor="' + l.id + '">Open in editor</button>' : ed ? '<a class="pill" href="' + esc(ed) + '">Open in editor</a>' : '') +
@@ -844,6 +921,10 @@
     if (e.target.closest('[data-close]')) return clearFocus();
     const cn = e.target.closest('[data-copy-node]');
     if (cn) return copy(cn, (DATA.nodeMd || {})[cn.dataset.copyNode] || '', 'Copy context');
+    const an = e.target.closest('[data-add-note]');
+    if (an) return addNote(an.dataset.addNote);
+    const om = e.target.closest('[data-open-map]');
+    if (om && host) return host.postMessage({ type: 'openMap', ref: om.dataset.openMap });
     const oe = e.target.closest('[data-open-editor]');
     if (oe && host) return openInHost(oe.dataset.openEditor);
     if (e.target.closest('[data-open-code]')) return setView('code');
@@ -1063,6 +1144,7 @@
   });
 
   // ---------------------------------------------------------------- boot
+  if (host || !MAPS.size) $('#allMaps').hidden = true;
   $('.top-title').textContent = doc.title;
   document.title = 'Waymark · ' + doc.title;
   renderMapPane();

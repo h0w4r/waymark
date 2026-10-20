@@ -3,6 +3,18 @@ const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
 const M = require('./lib/model');
+const { pathToFileURL } = require('url');
+
+let libPromise = null;
+/** Loads the Waymark library (notes, HTML regeneration…) lazily. */
+function waymarkLib() {
+  if (!libPromise) {
+    const candidates = [path.join(__dirname, 'dist', 'lib.mjs'), path.join(__dirname, '..', 'src', 'lib.js')];
+    const file = candidates.find((f) => fs.existsSync(f));
+    libPromise = file ? import(pathToFileURL(file).href) : Promise.reject(new Error('Waymark library not found in the extension'));
+  }
+  return libPromise;
+}
 
 /** @type {{workspaces: ReturnType<typeof M.loadWorkspace>[], activeKey: string|null, lastIndex: number, panel: vscode.WebviewPanel|null, panelKey: string|null, lastPosted: string|null}} */
 const state = { workspaces: [], activeKey: null, lastIndex: -1, panel: null, panelKey: null, lastPosted: null };
@@ -48,9 +60,18 @@ class MapsTree {
     if (el.kind === 'map') {
       const it = new vscode.TreeItem(el.m.title, vscode.TreeItemCollapsibleState.Collapsed);
       const stale = el.m.nodes.filter((n) => n.stale).length;
-      it.description = `${el.m.nodes.length} nodes${stale ? ` · ${stale} to review` : ''}${el.key === activeMap()?.key ? ' · active' : ''}`;
+      const verified = el.m.nodes.filter((n) => n.check === 'supported').length;
+      const ran = el.m.nodes.filter((n) => n.exec === 'hit').length;
+      it.description = [
+        el.m.kind === 'overview' ? 'overview' : null,
+        `${el.m.nodes.length} nodes`,
+        verified ? `✓${verified}` : null,
+        ran ? `▶${ran}` : null,
+        stale ? `◔${stale}` : null,
+        el.key === activeMap()?.key ? 'active' : null,
+      ].filter(Boolean).join(' · ');
       it.tooltip = new vscode.MarkdownString(`**${el.m.title}**\n\n${el.m.description || ''}\n\n\`${el.m.id}\``);
-      it.iconPath = new vscode.ThemeIcon(el.key === activeMap()?.key ? 'map-filled' : 'map');
+      it.iconPath = new vscode.ThemeIcon(el.m.kind === 'overview' ? 'globe' : el.key === activeMap()?.key ? 'map-filled' : 'map');
       it.contextValue = 'waymarkMap';
       it.id = el.key;
       return it;
@@ -67,9 +88,16 @@ class MapsTree {
     it.description = `${path.posix.basename(n.path)}:${n.line}`;
     const md = new vscode.MarkdownString(M.nodeMarkdown(n));
     it.tooltip = md;
-    it.iconPath = new vscode.ThemeIcon(n.stale ? 'warning' : n.status === 'unresolved' || n.status === 'missing' ? 'error' : 'debug-breakpoint-log');
+    it.iconPath = new vscode.ThemeIcon(
+      n.stale ? 'warning'
+        : n.status === 'unresolved' || n.status === 'missing' || n.check === 'unsupported' ? 'error'
+        : n.mapRef ? 'link-external'
+        : n.check === 'supported' ? 'pass'
+        : 'debug-breakpoint-log',
+    );
+    if (n.notes.length) it.description += `  ✎${n.notes.length}`;
     it.command = { command: 'waymark.revealNode', title: 'Reveal', arguments: [el.key, n.id] };
-    it.contextValue = 'waymarkNode';
+    it.contextValue = n.mapRef ? 'waymarkNodeLinked' : 'waymarkNode';
     it.id = el.key + '::n' + n.id;
     return it;
   }
@@ -99,7 +127,9 @@ function cmdLink(label, command, args) {
 }
 function hoverFor(key, n) {
   const md = new vscode.MarkdownString(M.nodeMarkdown(n));
-  md.appendMarkdown('\n\n' + [cmdLink('Open in Waymark', 'waymark.openViewer', [key, n.id]), cmdLink('Explain', 'waymark.explain', [key, n.id])].join(' · '));
+  const links = [cmdLink('Open in Waymark', 'waymark.openViewer', [key, n.id]), cmdLink('Explain', 'waymark.explain', [key, n.id]), cmdLink('Add note', 'waymark.addNote', [key, n.id])];
+  if (n.mapRef) links.push(cmdLink('Open detailed map', 'waymark.openMapRef', [key, n.mapRef]));
+  md.appendMarkdown('\n\n' + links.join(' · '));
   md.isTrusted = true;
   return md;
 }
@@ -154,6 +184,7 @@ class Lenses {
         const desc = n.description.length > 90 ? n.description.slice(0, 87) + '…' : n.description;
         out.push(new vscode.CodeLens(range, { title: `${n.id} · ${desc}${n.stale ? '  ◔ review' : ''}`, command: 'waymark.openViewer', arguments: [key, n.id], tooltip: `${m.title} › ${n.traceTitle}` }));
         out.push(new vscode.CodeLens(range, { title: 'Explain', command: 'waymark.explain', arguments: [key, n.id] }));
+        if (n.mapRef) out.push(new vscode.CodeLens(range, { title: '↗ map', command: 'waymark.openMapRef', arguments: [key, n.mapRef] }));
         if (i > 0) out.push(new vscode.CodeLens(range, { title: '← prev', command: 'waymark.goto', arguments: [key, i - 1] }));
         if (i < m.nodes.length - 1) out.push(new vscode.CodeLens(range, { title: 'next →', command: 'waymark.goto', arguments: [key, i + 1] }));
       });
@@ -240,6 +271,8 @@ async function openViewer(key, id, { explain = false } = {}) {
       if (!m || !state.panelKey) return;
       if (m.type === 'select' && cfg().get('viewer.syncEditor', true)) revealNode(state.panelKey, m.id, { preserveFocus: true, fromViewer: true });
       if (m.type === 'open') revealNode(state.panelKey, m.id, { preserveFocus: false, fromViewer: true });
+      if (m.type === 'addNote') addNote(state.panelKey, m.id);
+      if (m.type === 'openMap') openMapRef(state.panelKey, m.ref);
     });
   }
   if (state.panelKey !== key) {
@@ -306,6 +339,33 @@ function mapArg(arg) {
   if (typeof arg === 'string') return findMap(arg);
   if (arg && arg.key) return findMap(arg.key);
   return activeMap();
+}
+
+// ------------------------------------------------------------------ human notes and links between maps
+async function addNote(key, id) {
+  const x = findMap(key);
+  if (!x) return;
+  const n = x.m.nodes.find((y) => y.id === id);
+  const text = await vscode.window.showInputBox({ prompt: `Team note for [${id}] ${n ? n.title : ''} (not AI-generated, kept across map updates)`, placeHolder: 'Gotcha, decision, link…' });
+  if (!text) return;
+  try {
+    const lib = await waymarkLib();
+    lib.noteMap(x.w.root, x.m.id, id, { text });
+    vscode.window.setStatusBarMessage(`Waymark: note added to [${id}]`, 3000);
+    reload(); // watcher would also catch it; reload now so the viewer updates immediately
+  } catch (e) {
+    vscode.window.showErrorMessage(`Waymark: could not save the note (${e.message})`);
+  }
+}
+
+function openMapRef(fromKey, ref) {
+  const from = findMap(fromKey);
+  if (!from || !ref) return;
+  const [id, node] = String(ref).split('#');
+  const target = keyOf(from.w, { id });
+  if (!findMap(target)) return vscode.window.showWarningMessage(`Waymark: map "${id}" not found.`);
+  state.panelKey = null; // force loading the other map in the panel
+  openViewer(target, node);
 }
 
 // ------------------------------------------------------------------ self-update from GitHub Releases
@@ -413,6 +473,21 @@ function activate(context) {
       if (x) runAgent(`/waymark refresh ${x.m.id}`);
     }),
     vscode.commands.registerCommand('waymark.verifyMaps', () => runAgent('/waymark verify')),
+    vscode.commands.registerCommand('waymark.addNote', async (key, id) => {
+      if (key && id) return addNote(key, id);
+      const ed = vscode.window.activeTextEditor;
+      const info = ed && relOf(ed.document.uri);
+      const nodes = info ? info.w.byFile.get(info.rel) || [] : [];
+      if (!nodes.length) return vscode.window.showInformationMessage('Waymark: no map node in this file.');
+      const line = ed.selection.active.line + 1;
+      const n = nodes.reduce((a, b) => (Math.abs(b.line - line) < Math.abs(a.line - line) ? b : a));
+      return addNote(info.w.root + '::' + n.mapId, n.id);
+    }),
+    vscode.commands.registerCommand('waymark.openMapRef', (key, ref) => openMapRef(key, ref)),
+    vscode.commands.registerCommand('waymark.checkMap', (arg) => {
+      const x = mapArg(arg);
+      if (x) runAgent(`/waymark check ${x.m.id}`);
+    }),
     vscode.commands.registerCommand('waymark.checkForUpdates', () =>
       checkForUpdates(context, { manual: true }).catch((e) => vscode.window.showErrorMessage(`Waymark update failed: ${e.message}`)),
     ),

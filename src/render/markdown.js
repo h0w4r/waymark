@@ -1,4 +1,5 @@
 import { renderMermaid } from './mermaid.js';
+import { checkState, execState } from '../state.js';
 
 /** ASCII call tree, e.g. "├── [1a] handleLogin  auth/login.ts:42". */
 export function renderTextTree(trace) {
@@ -36,7 +37,18 @@ function renderLoc(loc, o, full, stale) {
       `${stale ? ' (⚠ code changed since this was explained)' : ''}`,
   );
   o.push(`  ${loc.description}`);
+  const flags = [];
+  const cs = checkState(loc);
+  if (cs === 'supported') flags.push('✓ fact-checked');
+  else if (cs === 'partial') flags.push(`◑ partially verified: ${(loc.check.issues || []).join('; ')}`);
+  else if (cs === 'unsupported') flags.push(`✗ fact-check failed: ${(loc.check.issues || []).join('; ')}`);
+  const es = execState(loc);
+  if (es === 'hit') flags.push(`▶ executed by the tests (${loc.exec.count}×)`);
+  else if (es === 'miss') flags.push('○ not executed by the tests');
+  if (loc.mapRef) flags.push(`→ detailed map: waymark://${loc.mapRef.replace('#', '/')}`);
+  if (flags.length) o.push(`  _${flags.join(' · ')}_`);
   if (full && loc.explanation) o.push(`  ${loc.explanation.replace(/\n/g, '\n  ')}`);
+  for (const n of loc.notes || []) o.push(`  > 📝 Team note (${n.author}, ${String(n.at).slice(0, 10)}): ${n.text}`);
   if (full && loc.snippet?.code) {
     const numbered = loc.snippet.code
       .split('\n')

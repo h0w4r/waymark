@@ -1,5 +1,7 @@
 import { treeRefs } from './schema.js';
 import { narrativeGaps } from './store.js';
+import { checkState } from './state.js';
+import { traceHash } from './anchor.js';
 
 const REF_RE = /\[((?:\d+[a-z]{1,2})(?:\s*,\s*\d+[a-z]{1,2})*)\]/g;
 const words = (s) => (String(s || '').trim().match(/\S+/g) || []).length;
@@ -14,7 +16,7 @@ function refsIn(text) {
  * Static quality checks on a map's prose and structure (no code access needed).
  * error: broken references; warn: missing/weak narrative, uncited nodes, over-long labels.
  */
-export function lintMap(doc) {
+export function lintMap(doc, { mapIds = null } = {}) {
   const issues = [];
   const add = (level, where, message) => issues.push({ level, where, message });
   const ids = new Set(doc.traces.flatMap((t) => t.locations.map((l) => l.id)));
@@ -58,6 +60,17 @@ export function lintMap(doc) {
       if (l.explanation && l.explanation.trim().length < 80) add('warn', `[${l.id}] explanation`, 'very short; tell the story (3-6 sentences)');
     }
   }
+  for (const t of doc.traces) {
+    for (const l of t.locations) {
+      const st = checkState(l);
+      if (st === 'unsupported') add('error', `[${l.id}] fact-check`, `unsupported: ${(l.check.issues || []).join('; ') || 'see map'}`);
+      else if (st === 'partial') add('warn', `[${l.id}] fact-check`, `partial: ${(l.check.issues || []).join('; ') || 'see map'}`);
+      if (l.mapRef && mapIds && !mapIds.has(l.mapRef.split('#')[0])) add('error', `[${l.id}] mapRef`, `links to unknown map "${l.mapRef}"`);
+    }
+    if (t.check?.verdict === 'unsupported' && t.check.hash === traceHash(t)) add('error', `trace ${t.id} fact-check`, `unsupported: ${(t.check.issues || []).join('; ')}`);
+  }
+  if (doc.storyCheck?.verdict === 'unsupported') add('error', 'story fact-check', `unsupported: ${(doc.storyCheck.issues || []).join('; ')}`);
+
   const errors = issues.filter((i) => i.level === 'error').length;
   return { id: doc.id, errors, warnings: issues.length - errors, issues, ok: errors === 0 };
 }

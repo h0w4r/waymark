@@ -1,0 +1,396 @@
+{
+  "schemaVersion": 1,
+  "id": "arquitectura-general-de-waymark-del-agente-al-vi-798dd7",
+  "title": "Arquitectura general de Waymark: del agente al visor, el editor y CI",
+  "description": "Un agente arranca con `waymark_start` [1b] y envía su mapa a `waymark_create` [1c]; `saveMap` [1d] lo ancla al código [1e] y lo guarda en `.waymark/`. Desde ahí lo consumen el visor HTML [2a, 2b], la extensión de VS Code [2c, 2d] y CI mediante `verify` [3a, 3b] y `diff` sobre PRs [3c, 3d].",
+  "story": "## Qué problema resuelve\n\nWaymark guarda mapas narrados de cómo se ejecuta el código: trazas de nodos anclados a líneas exactas, con prosa para un compañero nuevo. El reto es que esos mapas sigan siendo fieles cuando el código cambia, y que lleguen a donde se trabaja: el navegador, el editor y los pull requests.\n\n## El viaje de un mapa\n\nTodo empieza en el agente. La CLI levanta el servidor MCP [1a], el agente pide el procedimiento con `waymark_start` [1b], explora el repo y envía el mapa a `waymark_create` [1c]. El handler delega en `saveMap` [1d], el único punto de escritura: normaliza, ancla cada ubicación con `anchorMap` [1e] (los números de línea del LLM son pistas, el texto de la línea es la verdad) y escribe el JSON en `.waymark/`.\n\nEse mismo `saveMap` dispara `writeHtml` [2a], que empaqueta mapa, archivos citados, CSS y cliente en un HTML autocontenido vía `renderHtml` [2b]. En paralelo, la extensión de VS Code lee los mismos JSON con `loadWorkspace` [2c] y, desde `activate` [2d], los muestra como árbol, CodeLens y resaltado en el editor.\n\nPor último, CI vigila la deriva. `waymark verify` [3a] llama a `verifyMap` [3b] para re-anclar y detectar cambios de código o de narrativa; `waymark diff` [3c] cruza un `git diff` con los nodos y la Action `waymark-pr` [3d] publica el reporte como comentario en cada PR.\n\n## Cómo encajan\n\nEl JSON en `.waymark/` es el contrato entre todas las piezas: el MCP y la CLI lo escriben, el visor y la extensión lo leen, y verify/diff lo comparan con el árbol de trabajo. No hay base de datos ni servidor persistente.\n\n**Takeaways:** cualquier escritura debe pasar por `saveMap` [1d] o `persist`, o el HTML quedará desfasado; si cambias el algoritmo de anclaje [1e], cambian a la vez la creación, verify y diff.\n\n## Maps to create next\n\n- **Extensión de VS Code**: `loadWorkspace` [2c], `activate` [2d], CodeLens y navegación entre nodos.\n- **CLI y orquestación de agentes**: `runAgent`, `generate`/`generateParallel` y el flujo paralelo `waymark_plan → add_trace → finalize`.\n- **Instalación y plugin**: `src/install.js`, `plugin/` y `.claude-plugin/`.",
+  "language": "es",
+  "traces": [
+    {
+      "id": "1",
+      "title": "Creación: del agente al almacén",
+      "description": "Cómo un agente, vía MCP, convierte una exploración en un mapa anclado y guardado.",
+      "diagramTitle": "Del agente a .waymark/",
+      "motivation": "Los agentes escriben mapas, pero sus números de línea no son fiables. Hace falta una única puerta de entrada que valide, ancle y persista.",
+      "details": "La CLI arranca el servidor MCP [1a]. El agente llama a `waymark_start` [1b] para recibir el procedimiento y luego a `waymark_create` [1c], que delega en `saveMap` [1d]. Allí `anchorMap` [1e] busca cada ubicación por su texto exacto y genera el reporte de anclas que vuelve al agente.",
+      "locations": [
+        {
+          "id": "1a",
+          "title": "Arranque del MCP",
+          "description": "El subcomando `mcp` de la CLI levanta el servidor stdio.",
+          "explanation": "Claude Code o Codex ejecutan `waymark mcp` según `.mcp.json`. La importación es perezosa para que el resto de comandos no carguen el SDK de MCP. Desde aquí todas las tools quedan disponibles para el agente.",
+          "path": "src/cli.js",
+          "lineNumber": 295,
+          "lineContent": "const { startStdio } = await import('./mcp.js');",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "b05f48fbab4b",
+          "snippet": {
+            "startLine": 292,
+            "code": "  if (!cmd || opt.help) return out(HELP);\n  switch (cmd) {\n    case 'mcp': {\n      const { startStdio } = await import('./mcp.js');\n      return startStdio();\n    }\n    case 'generate':\n      return generate(rest.join(' '));\n    case 'enrich':\n      return enrich(rest[0]);\n    case 'refresh':\n      return refresh(rest[0]);\n    case 'lint': {\n      const r = root();\n      const ids = rest[0] ? [loadMap(r, rest[0]).id] : listMaps(r).map((m) => m.id);\n      const mapIds = new Set(listMaps(r).map((m) => m.id));\n      const results = ids.map((i) => lintMap(loadMap(r, i), { mapIds }));\n      if (opt.json) return out(results);"
+          },
+          "narrativeHash": "b05f48fbab4b"
+        },
+        {
+          "id": "1b",
+          "title": "waymark_start",
+          "description": "Entrega el procedimiento, pistas del repo y mapas existentes.",
+          "explanation": "Es la primera llamada del agente. Según el modo (fast, smart, overview, parallel) devuelve una guía distinta, más puntos de entrada y archivos recientes. Así el agente reutiliza mapas en lugar de duplicarlos.",
+          "path": "src/mcp.js",
+          "lineNumber": 55,
+          "lineContent": "'waymark_start',",
+          "status": "ok",
+          "fileHash": "2b0b28761299",
+          "ctxHash": "fc29f61bf60c",
+          "snippet": {
+            "startLine": 52,
+            "code": "  );\n\n  server.registerTool(\n    'waymark_start',\n    {\n      title: 'Start a waymark',\n      description:\n        'Begin generating a waymark map for a topic/question. Returns the Waymark agent procedure (structure + storytelling rules), the input format, repo hints (recent files, entry points) and existing maps. Call this first, then explore the code and submit with waymark_create.',\n      inputSchema: {\n        query: z.string().describe('Topic or question, e.g. \"how does checkout payment work?\"'),\n        mode: z\n          .enum(['fast', 'smart', 'overview', 'parallel'])\n          .optional()\n          .describe('fast: short map quickly; smart (default): thorough map with full storytelling; overview: map of the whole system linking to detailed maps; parallel: plan traces for parallel builders'),\n        root: rootArg,\n      },\n      annotations: { readOnlyHint: true },\n    },"
+          },
+          "narrativeHash": "fc29f61bf60c"
+        },
+        {
+          "id": "1c",
+          "title": "waymark_create",
+          "description": "El handler resuelve la raíz y delega en saveMap.",
+          "explanation": "El agente envía el mapa completo y recibe un reporte de anclas, huecos de narrativa y lint. Si algo falla, el campo `next` le dice cómo corregir y reenviar con el mismo id.",
+          "path": "src/mcp.js",
+          "lineNumber": 126,
+          "lineContent": "const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });",
+          "mapRef": "waymark-create-flow#1b",
+          "status": "ok",
+          "fileHash": "2b0b28761299",
+          "ctxHash": "5a4b4e7ff99f",
+          "snippet": {
+            "startLine": 123,
+            "code": "    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      const next = [];\n      if (!report.healthy) {\n        next.push('Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".');\n      }\n      if (!narrative.complete) {\n        next.push('Narrative is incomplete (see \"narrative\"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id=\"' + doc.id + '\").');\n      }\n      const lint = lintMap(doc, { mapIds: new Set(listMaps(r).map((m) => m.id)) });\n      if (lint.errors) next.push('Lint found ' + lint.errors + ' error(s) (e.g. references to unknown nodes): fix them with waymark_annotate.');\n      if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,"
+          },
+          "narrativeHash": "5a4b4e7ff99f"
+        },
+        {
+          "id": "1d",
+          "title": "saveMap",
+          "description": "Normaliza, ancla, conserva metadatos y escribe JSON y HTML.",
+          "explanation": "Es el único punto de escritura de mapas nuevos. Mezcla datos previos si se reescribe un id, sella commit y rama, escribe el JSON y llama a `writeHtml` [2a]. Todo lo que lee el resto del sistema sale de aquí.",
+          "path": "src/store.js",
+          "lineNumber": 35,
+          "lineContent": "export function saveMap(root, input, { id, html = true } = {}) {",
+          "mapRef": "waymark-create-flow#1d",
+          "status": "ok",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "45159e8044ab",
+          "snippet": {
+            "startLine": 32,
+            "code": "}\n\n/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  baselineNarrative(map, { force: true });\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  if (existing) carryOver(existing, map);\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,"
+          },
+          "narrativeHash": "45159e8044ab"
+        },
+        {
+          "id": "1e",
+          "title": "anchorMap",
+          "description": "Ancla cada ubicación contra el árbol de trabajo y genera el reporte.",
+          "explanation": "Usa una caché de archivos compartida y clasifica cada ubicación como ok, moved, fuzzy, relocated, unresolved o missing. El mismo algoritmo lo reutilizan verify [3b] y diff [3c], por eso es el corazón del sistema.",
+          "path": "src/anchor.js",
+          "lineNumber": 218,
+          "lineContent": "export function anchorMap(root, map) {",
+          "mapRef": "waymark-create-flow#2a",
+          "status": "ok",
+          "fileHash": "bb82554c2c45",
+          "ctxHash": "3e16c9c5c719",
+          "snippet": {
+            "startLine": 215,
+            "code": "}\n\n/** Anchors every location of a normalized map in place; returns a summary report. */\nexport function anchorMap(root, map) {\n  const cache = new FileCache(root);\n  const report = { ok: 0, moved: 0, fuzzy: 0, relocated: 0, unresolved: 0, missing: 0, issues: [] };\n  for (const trace of map.traces) {\n    trace.locations = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      report[r.status]++;\n      if (r.status !== 'ok') report.issues.push({ id: r.id, status: r.status, path: r.path, note: r.note });\n      return r;\n    });\n  }\n  report.total = map.traces.reduce((n, t) => n + t.locations.length, 0);\n  report.healthy = report.unresolved === 0 && report.missing === 0;\n  return report;\n}"
+          },
+          "narrativeHash": "3e16c9c5c719"
+        }
+      ],
+      "tree": [
+        {
+          "ref": "1a",
+          "children": [
+            {
+              "ref": "1b",
+              "via": "primera llamada"
+            },
+            {
+              "label": "El agente explora el repo (solo lectura)"
+            },
+            {
+              "ref": "1c",
+              "via": "mapa JSON",
+              "children": [
+                {
+                  "ref": "1d",
+                  "children": [
+                    {
+                      "ref": "1e",
+                      "via": "ubicaciones"
+                    },
+                    {
+                      "label": "Escribe .waymark/<id>.json"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "narrativeHash": "26395bd0e9fc"
+    },
+    {
+      "id": "2",
+      "title": "Consumo: visor HTML y editor",
+      "description": "Cómo humanos leen el mapa en el navegador y dentro de VS Code.",
+      "diagramTitle": "Del JSON a las superficies de lectura",
+      "motivation": "Un mapa solo sirve si se lee donde se trabaja. El HTML se comparte sin servidor; la extensión lleva los nodos al propio código.",
+      "details": "Tras guardar, `writeHtml` [2a] llama a `renderHtml` [2b], que incrusta el mapa, los archivos citados y el cliente en un único HTML. La extensión de VS Code, en cambio, lee directamente los JSON con `loadWorkspace` [2c] y registra árbol, CodeLens y comandos en `activate` [2d].",
+      "locations": [
+        {
+          "id": "2a",
+          "title": "writeHtml",
+          "description": "Escribe el HTML del mapa y regenera el índice.",
+          "explanation": "Recoge una instantánea de los archivos referenciados y la lista de otros mapas para los enlaces `mapRef`. También regenera `.waymark/index.html`, la portada de todos los mapas.",
+          "path": "src/store.js",
+          "lineNumber": 62,
+          "lineContent": "export function writeHtml(root, doc) {",
+          "mapRef": "visor-html-de-waymark-render-y-sincronizacion-de-64112a#1a",
+          "status": "ok",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "0c82983102a5",
+          "snippet": {
+            "startLine": 59,
+            "code": "  return { doc, report, narrative: narrativeGaps(doc), jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc), maps: mapIndex(root, doc.id) }));\n  writeIndex(root);\n  return p;\n}\n\n/** Light index of the other maps (for mapRef links between maps). */\nfunction mapIndex(root, selfId) {\n  return listMaps(root)\n    .filter((m) => m.id !== selfId)\n    .map((m) => ({ id: m.id, title: m.title, kind: m.kind }));\n}\n\n/** .waymark/index.html: every map with its health, linking to each viewer. */"
+          },
+          "narrativeHash": "0c82983102a5"
+        },
+        {
+          "id": "2b",
+          "title": "renderHtml",
+          "description": "Genera el visor autocontenido con datos, CSS y cliente.",
+          "explanation": "Produce un HTML que funciona offline: panel del mapa, vista de código y diagrama sincronizados en el navegador. Como todo va embebido, el archivo se puede adjuntar o publicar tal cual.",
+          "path": "src/render/html.js",
+          "lineNumber": 25,
+          "lineContent": "export function renderHtml(doc, { files = {}, maps = [] } = {}) {",
+          "mapRef": "visor-html-de-waymark-render-y-sincronizacion-de-64112a#1e",
+          "status": "ok",
+          "fileHash": "8417b34b8047",
+          "ctxHash": "0922e822543f",
+          "snippet": {
+            "startLine": 22,
+            "code": " * explanations; code view with embedded files; interactive SVG diagram.\n * `files` is a snapshot { path: content } of the referenced files.\n */\nexport function renderHtml(doc, { files = {}, maps = [] } = {}) {\n  const data = {\n    doc,\n    files,\n    maps,\n    // Precomputed per-node state (fact-check verdict validity needs hashes the browser can't do sync).\n    states: Object.fromEntries(\n      doc.traces.flatMap((t) => t.locations.map((l) => [l.id, { check: checkState(l), exec: execState(l) }])),\n    ),\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    // Smaller context blocks for \"copy trace / node as context\".\n    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),\n    nodeMd: Object.fromEntries(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, renderMarkdown(doc, { node: l.id })]))),\n    mermaid: renderMermaid({ ...doc, diagram: undefined }),\n  };"
+          },
+          "narrativeHash": "0922e822543f"
+        },
+        {
+          "id": "2c",
+          "title": "loadWorkspace",
+          "description": "La extensión carga todos los mapas y los indexa por archivo.",
+          "explanation": "Lee cada JSON de `.waymark/` y construye un índice archivo → nodos. Así puede decorar líneas y mostrar CodeLens sin pasar por el MCP ni por la CLI.",
+          "path": "vscode/lib/model.js",
+          "lineNumber": 10,
+          "lineContent": "function loadWorkspace(root) {",
+          "status": "ok",
+          "fileHash": "78baee532c18",
+          "ctxHash": "1237b07c146e",
+          "snippet": {
+            "startLine": 7,
+            "code": "const PALETTE = ['#5b8cff', '#e8803a', '#3fae6a', '#c04fd0', '#d4a72c', '#2fb3c4', '#e0566b', '#8a7dff', '#7fb800', '#ff6fa8'];\n\n/** Loads every map in <root>/.waymark and indexes its nodes by file. */\nfunction loadWorkspace(root) {\n  const dir = path.join(root, '.waymark');\n  const maps = [];\n  let names = [];\n  try {\n    names = fs.readdirSync(dir).filter((f) => f.endsWith('.json'));\n  } catch {\n    return { root, maps, byFile: new Map() };\n  }\n  for (const f of names) {\n    try {\n      const doc = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8'));\n      if (!doc || !Array.isArray(doc.traces)) continue;\n      maps.push(normalize(doc));\n    } catch {"
+          },
+          "narrativeHash": "1237b07c146e"
+        },
+        {
+          "id": "2d",
+          "title": "activate",
+          "description": "Registra árbol de mapas, CodeLens, decoraciones y comandos.",
+          "explanation": "Punto de entrada de la extensión. Varios comandos (crear, enriquecer, verificar) no hacen el trabajo ellos mismos: lanzan al agente con `/waymark ...`, que vuelve a pasar por [1c].",
+          "path": "vscode/extension.js",
+          "lineNumber": 430,
+          "lineContent": "function activate(context) {",
+          "status": "ok",
+          "fileHash": "ce9fd11a40cd",
+          "ctxHash": "c4bad1cda8aa",
+          "snippet": {
+            "startLine": 427,
+            "code": "  }\n}\n\nfunction activate(context) {\n  lineType = vscode.window.createTextEditorDecorationType({\n    isWholeLine: true,\n    backgroundColor: new vscode.ThemeColor('editor.rangeHighlightBackground'),\n  });\n  status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 50);\n  status.command = 'waymark.setActiveMap';\n  context.subscriptions.push(lineType, status);\n\n  context.subscriptions.push(\n    vscode.window.registerTreeDataProvider('waymark.maps', tree),\n    vscode.languages.registerCodeLensProvider({ scheme: 'file' }, lenses),\n    vscode.commands.registerCommand('waymark.refresh', reload),\n    vscode.commands.registerCommand('waymark.revealNode', (key, id) => revealNode(key, id)),\n    vscode.commands.registerCommand('waymark.goto', (key, i) => gotoIndex(key, i)),"
+          },
+          "narrativeHash": "c4bad1cda8aa"
+        }
+      ],
+      "tree": [
+        {
+          "ref": "2a",
+          "children": [
+            {
+              "ref": "2b",
+              "via": "doc + archivos + mapas"
+            },
+            {
+              "label": "Escribe .waymark/index.html"
+            }
+          ]
+        },
+        {
+          "ref": "2d",
+          "children": [
+            {
+              "ref": "2c",
+              "via": "lee .waymark/*.json"
+            },
+            {
+              "label": "Árbol, CodeLens y resaltado"
+            }
+          ]
+        }
+      ],
+      "narrativeHash": "dcbc5909a1cf"
+    },
+    {
+      "id": "3",
+      "title": "CI: deriva y diff de PRs",
+      "description": "Cómo CI comprueba que los mapas siguen fieles y avisa en cada PR.",
+      "diagramTitle": "Vigilancia en CI",
+      "motivation": "El código cambia y los mapas envejecen en silencio. CI debe detectar anclas rotas y prosa desfasada, y avisar al autor del PR de qué flujos toca.",
+      "details": "`waymark verify` [3a] recorre los mapas y llama a `verifyMap` [3b], que re-ancla y detecta deriva de código y de narrativa. `waymark diff` [3c] cruza un `git diff` con los nodos; la Action `waymark-pr` [3d] lo ejecuta y comenta el reporte en el PR.",
+      "locations": [
+        {
+          "id": "3a",
+          "title": "CLI verify",
+          "description": "Verifica un mapa o todos y decide el código de salida.",
+          "explanation": "Entrada para humanos y CI. Con `--fix` guarda las anclas corregidas; sin él solo informa. El código de salida permite romper el build si hay anclas rotas.",
+          "path": "src/cli.js",
+          "lineNumber": 422,
+          "lineContent": "case 'verify': {",
+          "mapRef": "verificacion-de-deriva-y-reanclaje-de-waymark-8c8a2e#1a",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "ffbb861e6b68",
+          "snippet": {
+            "startLine": 419,
+            "code": "      const f = opt.format || 'markdown';\n      return out(f === 'json' ? doc : f === 'mermaid' ? renderMermaid(doc) : renderMarkdown(doc, { detail: f === 'compact' ? 'compact' : 'full' }));\n    }\n    case 'verify': {\n      const r = root();\n      const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);\n      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.narrative.stale) {\n          const parts = [];\n          if (v.narrative.nodes.length) parts.push('nodes ' + v.narrative.nodes.map((n) => `[${n}]`).join(', '));\n          if (v.narrative.traces.length) parts.push('trace guides ' + v.narrative.traces.join(', '));\n          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);"
+          },
+          "narrativeHash": "ffbb861e6b68"
+        },
+        {
+          "id": "3b",
+          "title": "verifyMap",
+          "description": "Re-ancla un mapa y detecta deriva de código y narrativa.",
+          "explanation": "Reutiliza el anclaje de [1e] y compara hashes de contexto para saber si el código bajo un nodo cambió desde que se explicó. Con `fix` persiste el mapa y regenera el HTML.",
+          "path": "src/verify.js",
+          "lineNumber": 11,
+          "lineContent": "export function verifyMap(root, id, { fix = false } = {}) {",
+          "mapRef": "verificacion-de-deriva-y-reanclaje-de-waymark-8c8a2e",
+          "status": "ok",
+          "fileHash": "0d87234eb5bf",
+          "ctxHash": "471a1a97a020",
+          "snippet": {
+            "startLine": 8,
+            "code": " * With fix=true, corrected line numbers/snippets/context hashes are written back\n * (narrative baselines are kept, so drifted prose stays flagged until it is rewritten).\n */\nexport function verifyMap(root, id, { fix = false } = {}) {\n  const doc = loadMap(root, id);\n  const cache = new FileCache(root);\n  const changes = [];\n  const changedFiles = new Set();\n  const counts = { ok: 0, moved: 0, fuzzy: 0, relocated: 0, unresolved: 0, missing: 0 };\n  let ctxChanged = false;\n\n  const fresh = { ...doc, traces: [] };\n  for (const trace of doc.traces) {\n    const results = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      counts[r.status]++;\n      if (loc.fileHash && r.fileHash && loc.fileHash !== r.fileHash) changedFiles.add(r.path);\n      if (r.ctxHash !== loc.ctxHash) ctxChanged = true;"
+          },
+          "narrativeHash": "471a1a97a020"
+        },
+        {
+          "id": "3c",
+          "title": "CLI diff",
+          "description": "Cruza un git diff con los nodos y renderiza el reporte.",
+          "explanation": "Llama a `diffMaps` y devuelve markdown o JSON. `--fail-on` permite que CI falle si se tocan nodos, se rompen anclas o hay deriva.",
+          "path": "src/cli.js",
+          "lineNumber": 349,
+          "lineContent": "const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });",
+          "mapRef": "fact-check-diff-de-impacto-para-prs-y-verificaci-8746b6#3a",
+          "status": "ok",
+          "fileHash": "80692f4e5655",
+          "ctxHash": "7c7e0f122c92",
+          "snippet": {
+            "startLine": 346,
+            "code": "      return;\n    }\n    case 'diff': {\n      const rep = diffMaps(root(), rest[0] || 'HEAD', { range: !!opt.range });\n      out(opt.format === 'json' ? rep : renderDiff(rep));\n      const f = opt['fail-on'];\n      if (\n        (f === 'touched' && rep.maps.some((m) => m.touched.length)) ||\n        (f === 'broken' && rep.maps.some((m) => m.broken.length)) ||\n        (f === 'drift' && rep.maps.some((m) => m.drift.stale || m.broken.length))\n      ) process.exitCode = 1;\n      return;\n    }\n    case 'exec': {\n      const r = root();\n      const sep = process.argv.indexOf('--');\n      let coverage;\n      let source;"
+          },
+          "narrativeHash": "7c7e0f122c92"
+        },
+        {
+          "id": "3d",
+          "title": "Action waymark-pr",
+          "description": "Ejecuta diff contra la rama base en cada pull request.",
+          "explanation": "La Action instala dependencias, genera el reporte contra `origin/<base>` y lo publica con `gh pr comment`, editando el comentario anterior para no llenar el PR de ruido.",
+          "path": ".github/workflows/waymark-pr.yml",
+          "lineNumber": 18,
+          "lineContent": "- run: node src/cli.js diff \"origin/${{ github.base_ref }}\" --range > waymark-report.md",
+          "mapRef": "fact-check-diff-de-impacto-para-prs-y-verificaci-8746b6",
+          "status": "ok",
+          "fileHash": "1d16869d0389",
+          "ctxHash": "0bd8bc4f2aea",
+          "snippet": {
+            "startLine": 15,
+            "code": "        with:\n          node-version: 22\n      - run: npm ci\n      - run: node src/cli.js diff \"origin/${{ github.base_ref }}\" --range > waymark-report.md\n      - name: Comment (updates the previous Waymark comment)\n        env:\n          GH_TOKEN: ${{ github.token }}\n          PR: ${{ github.event.pull_request.number }}\n        run: gh pr comment \"$PR\" --body-file waymark-report.md --edit-last 2>/dev/null || gh pr comment \"$PR\" --body-file waymark-report.md\n"
+          },
+          "narrativeHash": "0bd8bc4f2aea"
+        }
+      ],
+      "tree": [
+        {
+          "ref": "3a",
+          "children": [
+            {
+              "ref": "3b",
+              "via": "por cada mapa"
+            }
+          ]
+        },
+        {
+          "ref": "3d",
+          "children": [
+            {
+              "ref": "3c",
+              "via": "base del PR",
+              "children": [
+                {
+                  "label": "Comentario markdown en el PR"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "narrativeHash": "a43fcd580847"
+    }
+  ],
+  "links": [
+    {
+      "from": "1d",
+      "to": "2a",
+      "label": "genera el visor"
+    },
+    {
+      "from": "1e",
+      "to": "3b",
+      "label": "mismo algoritmo de anclaje"
+    },
+    {
+      "from": "2d",
+      "to": "1c",
+      "label": "lanza al agente"
+    }
+  ],
+  "tags": [
+    "overview",
+    "architecture"
+  ],
+  "kind": "overview",
+  "narrativeHash": "8c77f5d47802",
+  "meta": {
+    "createdAt": "2026-10-20T03:59:40.706Z",
+    "updatedAt": "2026-10-20T04:00:59.279Z",
+    "root": "C:\\DATOS\\codemaps-custom",
+    "commit": "9fce4e38f8797d3e72d7948c3f5e3646a2783d12",
+    "branch": "main",
+    "remote": "https://github.com/h0w4r/waymark",
+    "anchors": {
+      "ok": 13,
+      "moved": 0,
+      "fuzzy": 0,
+      "relocated": 0,
+      "unresolved": 0,
+      "missing": 0
+    },
+    "verifiedAt": "2026-10-20T04:02:57.560Z"
+  }
+}

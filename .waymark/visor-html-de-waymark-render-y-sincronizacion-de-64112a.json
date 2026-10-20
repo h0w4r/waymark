@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "id": "visor-html-de-waymark-render-y-sincronizacion-de-64112a",
   "title": "Visor HTML de Waymark: render y sincronización de panel, código y diagrama",
-  "description": "El servidor guarda cada mapa y genera un HTML autocontenido [1a] que incrusta una instantánea de los archivos referenciados [1c] junto con el documento, el markdown y el Mermaid [1e]. En el navegador, `viewer.client.js` reconstruye un modelo indexado [2a, 2c] y pinta tres superficies — panel del mapa [3a], vista de código [4a] y diagrama SVG [5a] — que quedan sincronizadas por una única función `select` [6a].",
-  "story": "## El problema\\n\\nUn mapa de Waymark es un JSON con trazas, ubicaciones ancladas a líneas y mucha prosa. Para que un humano lo use hace falta verlo: leer la historia, saltar al código y entender la forma del flujo. Y debe funcionar al abrir el archivo desde disco, compartirlo por chat, adjuntarlo a un ticket o incrustarlo en un webview de VS Code: sin servidor, sin red, sin dependencias.\\n\\n## Acto 1: empaquetar todo en un solo archivo\\n\\nCada vez que se guarda un mapa, `writeHtml` [1a] llama a `collectFiles` [1b], que lee cada archivo referenciado con límites de tamaño [1c] y normaliza CRLF a LF [1d] para que los números de línea coincidan con los anclajes. `renderHtml` [1e] arma un objeto `data` con el documento, los archivos, el markdown (del mapa, de cada traza y de cada nodo, para copiarlo como contexto) y el Mermaid [1f], lo serializa de forma segura dentro de un `<script type=\\\"application/json\\\">` [1g, 1h] e inyecta el CSS y el cliente leídos de disco una sola vez al cargar el módulo [1i]. El HTML trae solo el esqueleto vacío [1j]: el cliente lo rellena.\\n\\n## Acto 2: el cliente reconstruye un modelo\\n\\nAl ejecutarse, el cliente parsea el JSON incrustado [2a], asigna un color de paleta por traza [2b] y aplana todas las ubicaciones en `locs` y en el índice `byId` [2c]; el orden de pestañas sale del orden de aparición de archivos [2d], y a la vez se marcan los nodos cuya prosa tiene deriva y se detecta si hay un host de VS Code. Las preferencias (raíz local, editor, ancho del panel, vista) viven en `localStorage` por id de mapa [2e], y el estado mutable se reduce a un objeto `state` [2f]. El arranque [2g] pinta el panel, elige la vista y selecciona la ubicación del `#hash` o la primera.\\n\\n## Acto 3: tres superficies, un solo selector\\n\\nEl panel del mapa [3a] renderiza cabecera, guías y el árbol anotado [3b], distinguiendo primeras apariciones de referencias repetidas [3c] y señalando con ◔ las explicaciones por revisar; toda la prosa pasa por un mini-markdown [3e] que convierte `[1a]` en enlaces clicables [3d]. La vista de código [4a] pinta el archivo embebido con marcadores en el canalón [4b] o cae a fragmentos si no se pudo incrustar [4c, 4d]; `showInCode` [4e] inserta la anotación en línea con prev/next [4f]. El diagrama [5a] es un SVG propio: cada traza se dispone como árbol ordenado [5c, 5d], los clústeres fluyen en filas [5e] y los nodos son `foreignObject` con HTML [5h]. Todos los clics — tarjeta [3g], enlace de referencia, marcador del canalón [4g], nodo del diagrama [5j], teclado o buscador [6g] y mensajes de VS Code — terminan en `select` [6a], que resalta la tarjeta [6b], mueve el código [6c], enfoca el diagrama [6d] y abre su tarjeta [6e].\\n\\n**Takeaways:**\\n- `select` [6a] es el único punto de sincronización; cualquier interacción nueva debe pasar por él o las vistas se desalinean. Dentro de VS Code también es quien avisa a la extensión, usando `opts.from` para no hacer eco.\\n- Los ids de ubicación son la clave compartida: `data-id`, `data-ref`, `byId`, `nodeMd` y `dg.primary` [5f] dependen de ellos.\\n- El diagrama se construye perezosamente [6f]; código que asuma `dg` no nulo rompe en la vista de código.\\n- Si se quita la normalización CRLF [1d] o se superan los límites [1c], el código muestra solo fragmentos y los marcadores pueden caer en líneas incorrectas.",
+  "description": "El servidor guarda cada mapa y genera un HTML autocontenido [1a] que incrusta una instantánea de los archivos referenciados [1c] junto con el documento, el estado de verificación por nodo, el markdown y el Mermaid [1e]. En el navegador, `viewer.client.js` reconstruye un modelo indexado [2a, 2c] y pinta tres superficies — panel del mapa [3a], vista de código [4a] y diagrama SVG [5a] — que quedan sincronizadas por una única función `select` [6a].",
+  "story": "## El problema\n\nUn mapa de Waymark es un JSON con trazas, ubicaciones ancladas a líneas y mucha prosa. Para que un humano lo use hace falta verlo: leer la historia, saltar al código y entender la forma del flujo. Y debe funcionar al abrir el archivo desde disco, compartirlo por chat, adjuntarlo a un ticket o incrustarlo en un webview de VS Code: sin servidor, sin red, sin dependencias.\n\n## Acto 1: empaquetar todo en un solo archivo\n\nCada vez que se guarda un mapa, `writeHtml` [1a] llama a `collectFiles` [1b], que lee cada archivo referenciado con límites de tamaño [1c] y normaliza CRLF a LF [1d] para que los números de línea coincidan con los anclajes; además pasa un índice ligero de los demás mapas (para los enlaces `mapRef`) y regenera `.waymark/index.html`. `renderHtml` [1e] arma un objeto `data` con el documento, los archivos, ese índice de mapas, el estado precalculado de cada nodo (veredicto de fact-check y resultado de ejecución), el markdown (del mapa, de cada traza y de cada nodo, para copiarlo como contexto) y el Mermaid [1f]; lo serializa de forma segura dentro de un `<script type=\"application/json\">` [1g, 1h] e inyecta el CSS y el cliente leídos de disco una sola vez al cargar el módulo [1i]. El HTML trae solo el esqueleto vacío [1j]: el cliente lo rellena.\n\n## Acto 2: el cliente reconstruye un modelo\n\nAl ejecutarse, el cliente parsea el JSON incrustado [2a], asigna un color de paleta por traza [2b] y aplana todas las ubicaciones en `locs` y en el índice `byId` [2c]; el orden de pestañas sale del orden de aparición de archivos [2d], y a la vez se marcan los nodos cuya prosa tiene deriva y se detecta si hay un host de VS Code. Las preferencias (raíz local, editor, ancho del panel, vista) viven en `localStorage` por id de mapa [2e], y el estado mutable se reduce a un objeto `state` [2f]. El arranque [2g] pinta el panel, elige la vista y selecciona la ubicación del `#hash` o la primera.\n\n## Acto 3: tres superficies, un solo selector\n\nEl panel del mapa [3a] renderiza cabecera (con chips de verificación y ejecución), guías y el árbol anotado [3b], distinguiendo primeras apariciones de referencias repetidas [3c]; cada tarjeta lleva insignias (◔ deriva, ✓/◑/✗ fact-check, ▶/○ ejecución, ↗ mapa detallado, ✎ notas) y un bloque de extras con incidencias, enlace al mapa detallado y notas del equipo. Toda la prosa pasa por un mini-markdown [3e] que convierte `[1a]` en enlaces clicables [3d]. La vista de código [4a] pinta el archivo embebido con marcadores en el canalón [4b] o cae a fragmentos si no se pudo incrustar [4c, 4d]; `showInCode` [4e] inserta la anotación en línea con prev/next [4f]. El diagrama [5a] es un SVG propio: cada traza se dispone como árbol ordenado [5c, 5d], los clústeres fluyen en filas [5e] y los nodos son `foreignObject` con HTML [5h]. Todos los clics — tarjeta [3g], enlace de referencia, marcador del canalón [4g], nodo del diagrama [5j], teclado o buscador [6g] y mensajes de VS Code — terminan en `select` [6a], que resalta la tarjeta [6b], mueve el código [6c], enfoca el diagrama [6d] y abre su tarjeta [6e, 5k].\n\n**Takeaways:**\n- `select` [6a] es el único punto de sincronización; cualquier interacción nueva debe pasar por él o las vistas se desalinean. Dentro de VS Code también es quien avisa a la extensión, usando `opts.from` para no hacer eco.\n- Los ids de ubicación son la clave compartida: `data-id`, `data-ref`, `byId`, `nodeMd`, `states` y `dg.primary` [5f] dependen de ellos.\n- El diagrama se construye perezosamente [6f]; código que asuma `dg` no nulo rompe en la vista de código.\n- Las notas del equipo no se escriben desde el HTML: fuera de VS Code, «+ Note» solo copia el comando `waymark note` para ejecutarlo en el repo.\n- Si se quita la normalización CRLF [1d] o se superan los límites [1c], el código muestra solo fragmentos y los marcadores pueden caer en líneas incorrectas.",
   "language": "es",
   "query": "¿Cómo renderiza el visor de Waymark un mapa y cómo se sincronizan el panel del mapa, la vista de código con archivos embebidos y el diagrama interactivo?",
   "traces": [
@@ -12,26 +12,26 @@
       "title": "Generación del HTML autocontenido",
       "description": "Cómo el servidor empaqueta mapa, archivos, CSS y cliente en un único HTML.",
       "diagramTitle": "Server-side HTML Packaging",
-      "motivation": "El visor debe abrirse desde disco o compartirse como un único archivo, sin servidor ni red. Por eso todo — datos, código fuente referenciado, estilos y lógica — tiene que viajar dentro del HTML, de forma segura frente a inyección de `</script>` y con un tamaño acotado.",
-      "details": "`writeHtml` [1a] es el punto de entrada: lo invoca el guardado del mapa y escribe `<id>.html` junto al JSON. Antes de renderizar llama a `collectFiles` [1b], que recorre las rutas únicas de todas las ubicaciones. Cada archivo pasa por un filtro [1c] (no regular, >512 KB o presupuesto total de 8 MB agotado → se omite) y luego se normaliza CRLF→LF [1d]; los archivos que faltan simplemente no aparecen y el cliente usará fragmentos.\n\n`renderHtml` [1e] construye el objeto `data` [1f] con `doc`, `files`, el markdown en tres granularidades (mapa completo, por traza y por nodo, para los botones «Copy context») y un Mermaid generado (para «copiar diagrama»). Lo serializa con `inlineJson` [1g], que escapa todo `<` como `<`, y lo incrusta como bloque JSON [1h]. El CSS y el cliente se leyeron de disco al cargar el módulo [1i] y se incrustan directamente. El marcado es solo un esqueleto con barra superior y contenedores vacíos [1j] que el cliente rellenará.",
+      "motivation": "El visor debe abrirse desde disco o compartirse como un único archivo, sin servidor ni red. Por eso todo — datos, código fuente referenciado, estado de verificación, estilos y lógica — tiene que viajar dentro del HTML, de forma segura frente a inyección de `</script>` y con un tamaño acotado.",
+      "details": "`writeHtml` [1a] es el punto de entrada: lo invoca el guardado del mapa (y la anotación) y escribe `<id>.html` junto al JSON. Antes de renderizar llama a `collectFiles` [1b], que recorre las rutas únicas de todas las ubicaciones, y a `mapIndex`, que resume los demás mapas del repo para resolver enlaces `mapRef`; al terminar regenera `.waymark/index.html` con `writeIndex`. Cada archivo pasa por un filtro [1c] (no regular, >512 KB o presupuesto total de 8 MB agotado → se omite) y luego se normaliza CRLF→LF [1d]; los archivos que faltan simplemente no aparecen y el cliente usará fragmentos.\n\n`renderHtml` [1e] construye el objeto `data` [1f] con `doc`, `files`, `maps`, `states` (veredicto de fact-check y de ejecución por nodo, precalculados porque requieren hashes), el markdown en tres granularidades (mapa completo, por traza y por nodo, para los botones «Copy context») y un Mermaid generado. Lo serializa con `inlineJson` [1g], que escapa todo `<` como `<`, y lo incrusta como bloque JSON [1h]. El CSS y el cliente se leyeron de disco al cargar el módulo [1i] y se incrustan directamente. El marcado es solo un esqueleto con barra superior y contenedores vacíos [1j] que el cliente rellenará.",
       "locations": [
         {
           "id": "1a",
           "title": "writeHtml",
-          "description": "Escribe el HTML del mapa junto al JSON, con archivos embebidos.",
-          "explanation": "Es la frontera entre la persistencia y el visor: se llama tras guardar el JSON (y también al anotar) para regenerar `<id>.html`. Combina dos ingredientes: el documento ya validado y la instantánea de archivos de `collectFiles` [1b]. Que el HTML se regenere en cada escritura significa que nunca hay que «compilar» el visor aparte. La contrapartida es que la instantánea refleja el árbol de trabajo en ese momento, no el commit.",
+          "description": "Escribe el HTML del mapa con archivos, índice de mapas y regenera index.html.",
+          "explanation": "Es la frontera entre la persistencia y el visor: se llama tras guardar el JSON (y también al anotar) para regenerar `<id>.html`. Combina tres ingredientes: el documento ya validado, la instantánea de archivos de `collectFiles` [1b] y `mapIndex`, una lista ligera (id, título, tipo) de los demás mapas para que los enlaces `mapRef` muestren títulos. Después llama a `writeIndex`, así que `.waymark/index.html` con la salud de todos los mapas siempre queda al día. Que el HTML se regenere en cada escritura significa que nunca hay que «compilar» el visor aparte; la contrapartida es que la instantánea refleja el árbol de trabajo en ese momento, no el commit.",
           "path": "src/store.js",
-          "lineNumber": 58,
+          "lineNumber": 62,
           "lineContent": "export function writeHtml(root, doc) {",
           "symbol": "writeHtml",
           "status": "ok",
-          "fileHash": "ac474b197808",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "0c82983102a5",
           "snippet": {
-            "startLine": 55,
-            "code": "  return { doc, report, narrative: narrativeGaps(doc), jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc) }));\n  return p;\n}\n\nconst MAX_FILE_BYTES = 512 * 1024;\nconst MAX_TOTAL_BYTES = 8 * 1024 * 1024;\n\n/** Snapshot of every referenced file, embedded in the viewer (code tabs, gutter markers). */\nexport function collectFiles(root, doc) {\n  const files = {};\n  let total = 0;\n  const paths = [...new Set(doc.traces.flatMap((t) => t.locations.map((l) => l.path)))];\n  for (const rel of paths) {"
+            "startLine": 59,
+            "code": "  return { doc, report, narrative: narrativeGaps(doc), jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc), maps: mapIndex(root, doc.id) }));\n  writeIndex(root);\n  return p;\n}\n\n/** Light index of the other maps (for mapRef links between maps). */\nfunction mapIndex(root, selfId) {\n  return listMaps(root)\n    .filter((m) => m.id !== selfId)\n    .map((m) => ({ id: m.id, title: m.title, kind: m.kind }));\n}\n\n/** .waymark/index.html: every map with its health, linking to each viewer. */"
           },
-          "ctxHash": "d5769c20f9bf",
-          "narrativeHash": "d5769c20f9bf"
+          "narrativeHash": "0c82983102a5"
         },
         {
           "id": "1b",
@@ -39,16 +39,16 @@
           "description": "Toma una instantánea de cada archivo referenciado por el mapa.",
           "explanation": "Deduplica las rutas de todas las ubicaciones de todas las trazas y lee cada una de forma segura con `safeJoin`, evitando escapar de la raíz del repo. El resultado es un diccionario `{ ruta: contenido }` que viaja dentro del HTML y alimenta las pestañas y el canalón de la vista de código [4a]. Los errores de lectura se tragan a propósito: un archivo borrado no debe impedir generar el visor.",
           "path": "src/store.js",
-          "lineNumber": 68,
+          "lineNumber": 205,
           "lineContent": "export function collectFiles(root, doc) {",
           "symbol": "collectFiles",
           "status": "ok",
-          "fileHash": "ac474b197808",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "cf7819ad6319",
           "snippet": {
-            "startLine": 65,
+            "startLine": 202,
             "code": "const MAX_TOTAL_BYTES = 8 * 1024 * 1024;\n\n/** Snapshot of every referenced file, embedded in the viewer (code tabs, gutter markers). */\nexport function collectFiles(root, doc) {\n  const files = {};\n  let total = 0;\n  const paths = [...new Set(doc.traces.flatMap((t) => t.locations.map((l) => l.path)))];\n  for (const rel of paths) {\n    try {\n      const abs = safeJoin(root, rel);\n      const st = fs.statSync(abs);\n      if (!st.isFile() || st.size > MAX_FILE_BYTES || total + st.size > MAX_TOTAL_BYTES) continue;\n      const text = fs.readFileSync(abs, 'utf8');\n      if (text.indexOf(String.fromCharCode(0)) !== -1) continue; // binary\n      files[rel] = text.split(String.fromCharCode(13, 10)).join(String.fromCharCode(10));\n      total += st.size;\n    } catch {\n      /* missing file: the viewer falls back to the stored snippet */"
           },
-          "ctxHash": "cf7819ad6319",
           "narrativeHash": "cf7819ad6319"
         },
         {
@@ -57,15 +57,15 @@
           "description": "Omite archivos grandes, binarios o que exceden el presupuesto total.",
           "explanation": "Un HTML con decenas de megas sería inmanejable para compartir, así que hay dos techos: 512 KB por archivo y 8 MB en total. Justo después se descartan binarios detectando un byte nulo. Los archivos omitidos no rompen nada: el cliente detecta su ausencia en `FILES` [4c] y muestra solo los fragmentos guardados. Ojo: el orden de las rutas decide quién entra cuando se agota el presupuesto.",
           "path": "src/store.js",
-          "lineNumber": 76,
+          "lineNumber": 213,
           "lineContent": "if (!st.isFile() || st.size > MAX_FILE_BYTES || total + st.size > MAX_TOTAL_BYTES) continue;",
           "status": "ok",
-          "fileHash": "ac474b197808",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "c4700c9d3aff",
           "snippet": {
-            "startLine": 73,
+            "startLine": 210,
             "code": "    try {\n      const abs = safeJoin(root, rel);\n      const st = fs.statSync(abs);\n      if (!st.isFile() || st.size > MAX_FILE_BYTES || total + st.size > MAX_TOTAL_BYTES) continue;\n      const text = fs.readFileSync(abs, 'utf8');\n      if (text.indexOf(String.fromCharCode(0)) !== -1) continue; // binary\n      files[rel] = text.split(String.fromCharCode(13, 10)).join(String.fromCharCode(10));\n      total += st.size;\n    } catch {\n      /* missing file: the viewer falls back to the stored snippet */\n    }\n  }\n  return files;\n}\n\nconst sha = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 12);\nconst storyHash = (doc) => sha(doc.traces.map((t) => traceHash(t)).join('|'));\n"
           },
-          "ctxHash": "c4700c9d3aff",
           "narrativeHash": "c4700c9d3aff"
         },
         {
@@ -74,51 +74,51 @@
           "description": "Convierte CRLF a LF para alinear números de línea.",
           "explanation": "El cliente divide el archivo con `split('\\n')` [4c]; si quedaran `\\r` al final de cada línea se verían caracteres extra y el resaltado se ensuciaría. Normalizar aquí mantiene la vista coherente con los hashes de anclaje, que también normalizan finales de línea. El uso de `String.fromCharCode` evita escapes literales en el fuente, una precaución frente a herramientas que reescriben barras invertidas.",
           "path": "src/store.js",
-          "lineNumber": 79,
+          "lineNumber": 216,
           "lineContent": "files[rel] = text.split(String.fromCharCode(13, 10)).join(String.fromCharCode(10));",
           "status": "ok",
-          "fileHash": "ac474b197808",
+          "fileHash": "3c9966c81adf",
+          "ctxHash": "4792dc42ac46",
           "snippet": {
-            "startLine": 76,
+            "startLine": 213,
             "code": "      if (!st.isFile() || st.size > MAX_FILE_BYTES || total + st.size > MAX_TOTAL_BYTES) continue;\n      const text = fs.readFileSync(abs, 'utf8');\n      if (text.indexOf(String.fromCharCode(0)) !== -1) continue; // binary\n      files[rel] = text.split(String.fromCharCode(13, 10)).join(String.fromCharCode(10));\n      total += st.size;\n    } catch {\n      /* missing file: the viewer falls back to the stored snippet */\n    }\n  }\n  return files;\n}\n\nconst sha = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 12);\nconst storyHash = (doc) => sha(doc.traces.map((t) => traceHash(t)).join('|'));\n\n/**\n * Records, for every node / trace / the story, a hash of the code the prose was written for.\n * force=true overwrites (prose just written); otherwise only fills missing baselines (old maps)."
           },
-          "ctxHash": "4792dc42ac46",
           "narrativeHash": "4792dc42ac46"
         },
         {
           "id": "1e",
           "title": "renderHtml",
-          "description": "Construye el HTML completo a partir del documento y los archivos.",
-          "explanation": "Es una función pura: documento + archivos entran, una cadena HTML sale. No contiene lógica de interacción; esa vive en `viewer.client.js`, que se incrusta tal cual. Separar plantilla y cliente permite editar el JS como archivo normal (con resaltado y linters) en lugar de una cadena gigante dentro de un template literal. Además del esqueleto [1j], la plantilla ya trae la barra superior con buscador, selector de vista, «Copy context» y ajustes del editor.",
+          "description": "Construye el HTML completo a partir del documento, archivos y mapas.",
+          "explanation": "Es una función pura: documento, archivos e índice de mapas entran, una cadena HTML sale. No contiene lógica de interacción; esa vive en `viewer.client.js`, que se incrusta tal cual. Separar plantilla y cliente permite editar el JS como archivo normal (con resaltado y linters) en lugar de una cadena gigante dentro de un template literal. Además del esqueleto [1j], la plantilla ya trae la barra superior con buscador, selector de vista, enlace «All maps» al índice, «Copy context» y ajustes del editor.",
           "path": "src/render/html.js",
-          "lineNumber": 24,
-          "lineContent": "export function renderHtml(doc, { files = {} } = {}) {",
+          "lineNumber": 25,
+          "lineContent": "export function renderHtml(doc, { files = {}, maps = [] } = {}) {",
           "symbol": "renderHtml",
           "status": "ok",
-          "fileHash": "2939d143d2b9",
+          "fileHash": "8417b34b8047",
+          "ctxHash": "0922e822543f",
           "snippet": {
-            "startLine": 21,
-            "code": " * explanations; code view with embedded files; interactive SVG diagram.\n * `files` is a snapshot { path: content } of the referenced files.\n */\nexport function renderHtml(doc, { files = {} } = {}) {\n  const data = {\n    doc,\n    files,\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    // Smaller context blocks for \"copy trace / node as context\".\n    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),\n    nodeMd: Object.fromEntries(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, renderMarkdown(doc, { node: l.id })]))),\n    mermaid: renderMermaid({ ...doc, diagram: undefined }),\n  };\n  return `<!doctype html>\n<html lang=\"${escHtml(doc.language || 'en')}\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+            "startLine": 22,
+            "code": " * explanations; code view with embedded files; interactive SVG diagram.\n * `files` is a snapshot { path: content } of the referenced files.\n */\nexport function renderHtml(doc, { files = {}, maps = [] } = {}) {\n  const data = {\n    doc,\n    files,\n    maps,\n    // Precomputed per-node state (fact-check verdict validity needs hashes the browser can't do sync).\n    states: Object.fromEntries(\n      doc.traces.flatMap((t) => t.locations.map((l) => [l.id, { check: checkState(l), exec: execState(l) }])),\n    ),\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    // Smaller context blocks for \"copy trace / node as context\".\n    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),\n    nodeMd: Object.fromEntries(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, renderMarkdown(doc, { node: l.id })]))),\n    mermaid: renderMermaid({ ...doc, diagram: undefined }),\n  };"
           },
-          "ctxHash": "fe95e1cc6e3d",
-          "narrativeHash": "fe95e1cc6e3d"
+          "narrativeHash": "0922e822543f"
         },
         {
           "id": "1f",
           "title": "Objeto data",
-          "description": "Agrupa doc, files, markdown (mapa, traza y nodo) y Mermaid para el cliente.",
-          "explanation": "Este objeto es el contrato entre servidor y cliente. `doc` y `files` alimentan las tres vistas. El markdown se precalcula en el servidor en tres granularidades: `markdown` (mapa completo, botón «Copy context»), `traceMd` por id de traza y `nodeMd` por id de ubicación, que usan los botones de copiar traza/nodo del panel [3g] y de la tarjeta del diagrama [5k]. `mermaid` alimenta el botón de copiar diagrama; se pasa `diagram: undefined` para forzar el Mermaid autogenerado aunque el mapa traiga uno manual.",
+          "description": "Agrupa doc, files, maps, states, markdown y Mermaid para el cliente.",
+          "explanation": "Este objeto es el contrato entre servidor y cliente. `doc` y `files` alimentan las tres vistas; `maps` permite mostrar el título de un mapa enlazado por `mapRef`. `states` guarda por id de nodo el veredicto de fact-check (`checkState`) y de ejecución (`execState`): se precalcula aquí porque decidir si un veredicto sigue vigente exige hashes que el navegador no puede calcular de forma síncrona, y de él salen chips e insignias del panel [3a, 3b]. El markdown se precalcula en tres granularidades: `markdown` (mapa completo), `traceMd` y `nodeMd`, que usan los botones de copiar del panel [3g] y de la tarjeta del diagrama [5k]. `mermaid` se genera con `diagram: undefined` para forzar el autogenerado aunque el mapa traiga uno manual.",
           "path": "src/render/html.js",
-          "lineNumber": 25,
+          "lineNumber": 26,
           "lineContent": "const data = {",
           "status": "ok",
-          "fileHash": "2939d143d2b9",
+          "fileHash": "8417b34b8047",
+          "ctxHash": "769fe4bd2db7",
           "snippet": {
-            "startLine": 22,
-            "code": " * `files` is a snapshot { path: content } of the referenced files.\n */\nexport function renderHtml(doc, { files = {} } = {}) {\n  const data = {\n    doc,\n    files,\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    // Smaller context blocks for \"copy trace / node as context\".\n    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),\n    nodeMd: Object.fromEntries(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, renderMarkdown(doc, { node: l.id })]))),\n    mermaid: renderMermaid({ ...doc, diagram: undefined }),\n  };\n  return `<!doctype html>\n<html lang=\"${escHtml(doc.language || 'en')}\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"generator\" content=\"waymark\">"
+            "startLine": 23,
+            "code": " * `files` is a snapshot { path: content } of the referenced files.\n */\nexport function renderHtml(doc, { files = {}, maps = [] } = {}) {\n  const data = {\n    doc,\n    files,\n    maps,\n    // Precomputed per-node state (fact-check verdict validity needs hashes the browser can't do sync).\n    states: Object.fromEntries(\n      doc.traces.flatMap((t) => t.locations.map((l) => [l.id, { check: checkState(l), exec: execState(l) }])),\n    ),\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    // Smaller context blocks for \"copy trace / node as context\".\n    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),\n    nodeMd: Object.fromEntries(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, renderMarkdown(doc, { node: l.id })]))),\n    mermaid: renderMermaid({ ...doc, diagram: undefined }),\n  };\n  return `<!doctype html>"
           },
-          "ctxHash": "223142cb7e4c",
-          "narrativeHash": "223142cb7e4c"
+          "narrativeHash": "769fe4bd2db7"
         },
         {
           "id": "1g",
@@ -126,15 +126,15 @@
           "description": "Serializa JSON escapando '<' para no cerrar el script.",
           "explanation": "Dentro de `<script type=\"application/json\">` el navegador no interpreta HTML, salvo una cosa: la secuencia `</script>` cierra el bloque. Como los archivos embebidos pueden contener exactamente eso, se reemplaza todo `<` por `<`, que `JSON.parse` [2a] vuelve a decodificar. `inlineScript` hace lo análogo para el cliente JS.",
           "path": "src/render/html.js",
-          "lineNumber": 16,
+          "lineNumber": 17,
           "lineContent": "const inlineJson = (v) => JSON.stringify(v).split('<').join(BS + 'u003c');",
           "status": "ok",
-          "fileHash": "2939d143d2b9",
-          "snippet": {
-            "startLine": 13,
-            "code": "  String(s ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' })[c]);\n\n// JSON inside <script type=\"application/json\">: only \"<\" must be neutralized (no \"</script>\").\nconst inlineJson = (v) => JSON.stringify(v).split('<').join(BS + 'u003c');\nconst inlineScript = (s) => s.replace(/<\\/script/gi, '<' + BS + '/script');\n\n/**\n * Self-contained, shareable viewer (no network): map pane with story, guides and\n * explanations; code view with embedded files; interactive SVG diagram.\n * `files` is a snapshot { path: content } of the referenced files.\n */\nexport function renderHtml(doc, { files = {} } = {}) {\n  const data = {\n    doc,\n    files,\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    // Smaller context blocks for \"copy trace / node as context\".\n    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),"
-          },
+          "fileHash": "8417b34b8047",
           "ctxHash": "08b02495e0ee",
+          "snippet": {
+            "startLine": 14,
+            "code": "  String(s ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' })[c]);\n\n// JSON inside <script type=\"application/json\">: only \"<\" must be neutralized (no \"</script>\").\nconst inlineJson = (v) => JSON.stringify(v).split('<').join(BS + 'u003c');\nconst inlineScript = (s) => s.replace(/<\\/script/gi, '<' + BS + '/script');\n\n/**\n * Self-contained, shareable viewer (no network): map pane with story, guides and\n * explanations; code view with embedded files; interactive SVG diagram.\n * `files` is a snapshot { path: content } of the referenced files.\n */\nexport function renderHtml(doc, { files = {}, maps = [] } = {}) {\n  const data = {\n    doc,\n    files,\n    maps,\n    // Precomputed per-node state (fact-check verdict validity needs hashes the browser can't do sync).\n    states: Object.fromEntries("
+          },
           "narrativeHash": "08b02495e0ee"
         },
         {
@@ -143,15 +143,15 @@
           "description": "Incrusta los datos como JSON inerte dentro del documento.",
           "explanation": "Usar un script de tipo JSON en vez de `var DATA = {...}` evita que el navegador evalúe los datos como código y permite parsearlos explícitamente. El cliente lo localiza por id en su primera línea útil [2a]. Va justo antes del script del cliente para que ya exista en el DOM cuando este se ejecute.",
           "path": "src/render/html.js",
-          "lineNumber": 103,
+          "lineNumber": 110,
           "lineContent": "<script id=\"waymark-data\" type=\"application/json\">${inlineJson(data)}</script>",
           "status": "ok",
-          "fileHash": "2939d143d2b9",
-          "snippet": {
-            "startLine": 100,
-            "code": "    </section>\n  </div>\n</div>\n<script id=\"waymark-data\" type=\"application/json\">${inlineJson(data)}</script>\n<script>${inlineScript(CLIENT)}</script>\n</body>\n</html>`;\n}\n"
-          },
+          "fileHash": "8417b34b8047",
           "ctxHash": "e66b9deeede3",
+          "snippet": {
+            "startLine": 107,
+            "code": "    </section>\n  </div>\n</div>\n<script id=\"waymark-data\" type=\"application/json\">${inlineJson(data)}</script>\n<script>${inlineScript(CLIENT)}</script>\n</body>\n</html>`;\n}\n\nconst pct = (a, b) => (b ? Math.round((a / b) * 100) + '%' : '—');\n\n/** .waymark/index.html: overview maps first, then flows; health badges per map; text filter. */\nexport function renderIndex(maps, { root = '' } = {}) {\n  const sorted = [...maps].sort((a, b) => (a.kind === 'overview' ? 0 : 1) - (b.kind === 'overview' ? 0 : 1) || String(b.updatedAt).localeCompare(String(a.updatedAt)));\n  const cards = sorted\n    .map((m) => {\n      const c = m.check || {};\n      const badges = ["
+          },
           "narrativeHash": "e66b9deeede3"
         },
         {
@@ -160,32 +160,32 @@
           "description": "Lee viewer.client.js una vez al cargar el módulo.",
           "explanation": "CSS y cliente se leen sincrónicamente al importar el módulo, no en cada render, así que generar muchos HTML es barato. Se resuelven relativos al propio módulo (`HERE`), lo que funciona igual en instalación global o local. La consecuencia: cambios en `viewer.client.js` requieren reiniciar el servidor MCP para verse en HTML nuevos.",
           "path": "src/render/html.js",
-          "lineNumber": 9,
+          "lineNumber": 10,
           "lineContent": "const CLIENT = fs.readFileSync(path.join(HERE, 'viewer.client.js'), 'utf8');",
           "status": "ok",
-          "fileHash": "2939d143d2b9",
+          "fileHash": "8417b34b8047",
+          "ctxHash": "86986bc31409",
           "snippet": {
-            "startLine": 6,
+            "startLine": 7,
             "code": "\nconst HERE = path.dirname(fileURLToPath(import.meta.url));\nconst CSS = fs.readFileSync(path.join(HERE, 'viewer.css'), 'utf8');\nconst CLIENT = fs.readFileSync(path.join(HERE, 'viewer.client.js'), 'utf8');\nconst BS = String.fromCharCode(92);\n\nconst escHtml = (s) =>\n  String(s ?? '').replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' })[c]);\n\n// JSON inside <script type=\"application/json\">: only \"<\" must be neutralized (no \"</script>\").\nconst inlineJson = (v) => JSON.stringify(v).split('<').join(BS + 'u003c');\nconst inlineScript = (s) => s.replace(/<\\/script/gi, '<' + BS + '/script');\n\n/**\n * Self-contained, shareable viewer (no network): map pane with story, guides and\n * explanations; code view with embedded files; interactive SVG diagram.\n * `files` is a snapshot { path: content } of the referenced files.\n */"
           },
-          "ctxHash": "86986bc31409",
           "narrativeHash": "86986bc31409"
         },
         {
           "id": "1j",
           "title": "Esqueleto del layout",
           "description": "Contenedores vacíos: panel del mapa, splitter, código y diagrama.",
-          "explanation": "El HTML estático solo define la estructura: `#mapPane` a la izquierda, un `#splitter` redimensionable y `#rightPane` con `#codeView` y `#diagramView` (este último oculto por defecto). Todo el contenido lo generará el cliente: el panel con `renderMapPane` [3a], el código con `renderFile` [4a] y el SVG con `renderDiagram` [5b]. Mantener el marcado mínimo evita duplicar lógica de render entre servidor y cliente.",
+          "explanation": "El HTML estático solo define la estructura: `#mapPane` a la izquierda, un `#splitter` redimensionable y `#rightPane` con `#codeView` y `#diagramView` (este último oculto por defecto). Todo el contenido lo generará el cliente: el panel con `renderMapPane` [3a], el código con `renderFile` [4a] y el SVG con `renderDiagram` [5g]. Mantener el marcado mínimo evita duplicar lógica de render entre servidor y cliente.",
           "path": "src/render/html.js",
-          "lineNumber": 69,
+          "lineNumber": 76,
           "lineContent": "<aside id=\"mapPane\" aria-label=\"Map\"></aside>",
           "status": "ok",
-          "fileHash": "2939d143d2b9",
+          "fileHash": "8417b34b8047",
+          "ctxHash": "8a185d644a29",
           "snippet": {
-            "startLine": 66,
+            "startLine": 73,
             "code": "    </label>\n  </div>\n  <div id=\"main\">\n    <aside id=\"mapPane\" aria-label=\"Map\"></aside>\n    <div id=\"splitter\" role=\"separator\" aria-orientation=\"vertical\" title=\"Drag to resize\"></div>\n    <section id=\"rightPane\">\n      <div id=\"codeView\">\n        <div id=\"fileTabs\"></div>\n        <div id=\"codeScroll\"><div id=\"code\"></div></div>\n      </div>\n      <div id=\"diagramView\" hidden>\n        <div class=\"dg-toolbar\">\n          <div class=\"legend\" id=\"legend\"></div>\n          <div class=\"zoom\">\n            <button id=\"zin\" title=\"Zoom in\">+</button>\n            <button id=\"zout\" title=\"Zoom out\">−</button>\n            <button id=\"zfit\" title=\"Fit all (f)\">⤢</button>\n            <button id=\"zsel\" title=\"Center selected node\">◎</button>"
           },
-          "ctxHash": "8a185d644a29",
           "narrativeHash": "8a185d644a29"
         }
       ],
@@ -211,12 +211,18 @@
               ]
             },
             {
+              "label": "mapIndex(): otros mapas"
+            },
+            {
               "ref": "1e",
-              "via": "doc + files",
+              "via": "doc + files + maps",
               "children": [
                 {
                   "ref": "1f",
                   "children": [
+                    {
+                      "label": "states: checkState · execState"
+                    },
                     {
                       "label": "renderMarkdown(doc, full)"
                     },
@@ -242,11 +248,14 @@
                   "via": "<style> + <script>"
                 }
               ]
+            },
+            {
+              "label": "writeIndex(): .waymark/index.html"
             }
           ]
         }
       ],
-      "narrativeHash": "16a66273fbb4"
+      "narrativeHash": "75891bbd3d0d"
     },
     {
       "id": "2",
@@ -265,12 +274,12 @@
           "lineNumber": 5,
           "lineContent": "const DATA = JSON.parse(document.getElementById('waymark-data').textContent);",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "038bbb023c77",
           "snippet": {
             "startLine": 2,
             "code": "(() => {\n  'use strict';\n\n  const DATA = JSON.parse(document.getElementById('waymark-data').textContent);\n  const { doc } = DATA;\n  const FILES = DATA.files || {};\n  const meta = doc.meta || {};\n  const PALETTE = ['#5b8cff', '#e8803a', '#3fae6a', '#c04fd0', '#d4a72c', '#2fb3c4', '#e0566b', '#8a7dff', '#7fb800', '#ff6fa8'];\n  const SVGNS = 'http://www.w3.org/2000/svg';\n\n  const $ = (s, el = document) => el.querySelector(s);\n  const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));\n  const esc = (s) =>\n    String(s == null ? '' : s).replace(/[&<>\"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;', \"'\": '&#39;' })[c]);\n  const base = (p) => p.split('/').pop();\n  const extOf = (p) => (base(p).includes('.') ? base(p).split('.').pop().toLowerCase() : base(p).toLowerCase());\n  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));\n"
           },
-          "ctxHash": "038bbb023c77",
           "narrativeHash": "038bbb023c77"
         },
         {
@@ -282,12 +291,12 @@
           "lineNumber": 21,
           "lineContent": "const traces = doc.traces.map((t, i) => ({ ...t, color: PALETTE[i % PALETTE.length], details: t.details || t.guide }));",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "3e877cbe16d2",
           "snippet": {
             "startLine": 18,
             "code": "  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));\n\n  // ---------------------------------------------------------------- model\n  const traces = doc.traces.map((t, i) => ({ ...t, color: PALETTE[i % PALETTE.length], details: t.details || t.guide }));\n  const locs = [];\n  const byId = new Map();\n  for (const t of traces) for (const l of t.locations) {\n    const x = { ...l, trace: t };\n    locs.push(x);\n    byId.set(l.id, x);\n  }\n  const fileOrder = [...new Set(locs.map((l) => l.path))];\n\n  // Narrative drift: prose written for code that changed afterwards (set by `waymark verify --fix`).\n  const drift = meta.narrativeDrift || { nodes: [], traces: [], story: false };\n  const staleNodes = new Set(drift.nodes || []);\n  for (const l of locs) if (l.narrativeHash && l.ctxHash && l.narrativeHash !== l.ctxHash) staleNodes.add(l.id);\n  const staleTraces = new Set(drift.traces || []);"
           },
-          "ctxHash": "3e877cbe16d2",
           "narrativeHash": "3e877cbe16d2"
         },
         {
@@ -299,12 +308,12 @@
           "lineNumber": 27,
           "lineContent": "byId.set(l.id, x);",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "8edfb0682b15",
           "snippet": {
             "startLine": 24,
             "code": "  for (const t of traces) for (const l of t.locations) {\n    const x = { ...l, trace: t };\n    locs.push(x);\n    byId.set(l.id, x);\n  }\n  const fileOrder = [...new Set(locs.map((l) => l.path))];\n\n  // Narrative drift: prose written for code that changed afterwards (set by `waymark verify --fix`).\n  const drift = meta.narrativeDrift || { nodes: [], traces: [], story: false };\n  const staleNodes = new Set(drift.nodes || []);\n  for (const l of locs) if (l.narrativeHash && l.ctxHash && l.narrativeHash !== l.ctxHash) staleNodes.add(l.id);\n  const staleTraces = new Set(drift.traces || []);\n  const DRIFT_NOTE = 'The code here changed after this was written — the prose may be outdated. Ask your agent: ';\n  const driftNote = (what) => '<div class=\"drift-note\">⚠ ' + esc(DRIFT_NOTE) + '<code>/waymark refresh ' + esc(doc.id) + '</code>' + (what ? ' (' + esc(what) + ')' : '') + '</div>';\n\n  // Embedded in a VS Code webview: talk to the extension instead of opening URLs.\n  const host = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;\n"
           },
-          "ctxHash": "8edfb0682b15",
           "narrativeHash": "8edfb0682b15"
         },
         {
@@ -316,12 +325,12 @@
           "lineNumber": 29,
           "lineContent": "const fileOrder = [...new Set(locs.map((l) => l.path))];",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "4e62bd40b386",
           "snippet": {
             "startLine": 26,
-            "code": "    locs.push(x);\n    byId.set(l.id, x);\n  }\n  const fileOrder = [...new Set(locs.map((l) => l.path))];\n\n  // Narrative drift: prose written for code that changed afterwards (set by `waymark verify --fix`).\n  const drift = meta.narrativeDrift || { nodes: [], traces: [], story: false };\n  const staleNodes = new Set(drift.nodes || []);\n  for (const l of locs) if (l.narrativeHash && l.ctxHash && l.narrativeHash !== l.ctxHash) staleNodes.add(l.id);\n  const staleTraces = new Set(drift.traces || []);\n  const DRIFT_NOTE = 'The code here changed after this was written — the prose may be outdated. Ask your agent: ';\n  const driftNote = (what) => '<div class=\"drift-note\">⚠ ' + esc(DRIFT_NOTE) + '<code>/waymark refresh ' + esc(doc.id) + '</code>' + (what ? ' (' + esc(what) + ')' : '') + '</div>';\n\n  // Embedded in a VS Code webview: talk to the extension instead of opening URLs.\n  const host = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;\n\n  const prefsKey = 'waymark:' + doc.id;\n  const prefs = Object.assign({ root: meta.root || '', editor: 'vscode', mapW: null, view: 'code' }, safeJson(localStorage.getItem(prefsKey)));"
+            "code": "    locs.push(x);\n    byId.set(l.id, x);\n  }\n  const fileOrder = [...new Set(locs.map((l) => l.path))];\n\n  // Narrative drift: prose written for code that changed afterwards (set by `waymark verify --fix`).\n  const drift = meta.narrativeDrift || { nodes: [], traces: [], story: false };\n  const staleNodes = new Set(drift.nodes || []);\n  for (const l of locs) if (l.narrativeHash && l.ctxHash && l.narrativeHash !== l.ctxHash) staleNodes.add(l.id);\n  const staleTraces = new Set(drift.traces || []);\n  const DRIFT_NOTE = 'The code here changed after this was written — the prose may be outdated. Ask your agent: ';\n  const driftNote = (what) => '<div class=\"drift-note\">⚠ ' + esc(DRIFT_NOTE) + '<code>/waymark refresh ' + esc(doc.id) + '</code>' + (what ? ' (' + esc(what) + ')' : '') + '</div>';\n\n  // Embedded in a VS Code webview: talk to the extension instead of opening URLs.\n  const host = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;\n\n  // Fact-check verdicts, execution results, links between maps, human notes.\n  const STATES = DATA.states || {};"
           },
-          "ctxHash": "4e62bd40b386",
           "narrativeHash": "4e62bd40b386"
         },
         {
@@ -330,15 +339,15 @@
           "description": "Combina defaults, meta.root y localStorage por id de mapa.",
           "explanation": "La raíz local y el editor permiten construir enlaces `vscode://` desde la tarjeta del diagrama [5k]; el ancho del panel y la vista se restauran al reabrir. La clave incluye el id del mapa, así que cada visor recuerda lo suyo. `safeJson` y el try/catch de `savePrefs` toleran modo privado o datos corruptos.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 43,
+          "lineNumber": 98,
           "lineContent": "const prefs = Object.assign({ root: meta.root || '', editor: 'vscode', mapW: null, view: 'code' }, safeJson(localStorage.getItem(prefsKey)));",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
-          "snippet": {
-            "startLine": 40,
-            "code": "  const host = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;\n\n  const prefsKey = 'waymark:' + doc.id;\n  const prefs = Object.assign({ root: meta.root || '', editor: 'vscode', mapW: null, view: 'code' }, safeJson(localStorage.getItem(prefsKey)));\n  function safeJson(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }\n  const savePrefs = () => { try { localStorage.setItem(prefsKey, JSON.stringify(prefs)); } catch { /* private mode */ } };\n\n  const state = { sel: null, view: prefs.view === 'diagram' ? 'diagram' : 'code', file: null, explainOpen: new Set(), annoExpl: false };\n\n  // ---------------------------------------------------------------- text helpers\n  const REF_RE = /\\[((?:\\d+[a-z]{1,2})(?:\\s*,\\s*\\d+[a-z]{1,2})*)\\]/g;\n  function refs(html) {\n    return html.replace(REF_RE, (m, list) => {\n      const ids = list.split(/\\s*,\\s*/);\n      if (!ids.every((id) => byId.has(id))) return m;\n      return '<span class=\"refs\">[' + ids.map((id) => '<a class=\"ref\" data-ref=\"' + id + '\">' + id + '</a>').join(', ') + ']</span>';\n    });\n  }"
-          },
+          "fileHash": "ac1ff9154972",
           "ctxHash": "3413146249e0",
+          "snippet": {
+            "startLine": 95,
+            "code": "  }\n\n  const prefsKey = 'waymark:' + doc.id;\n  const prefs = Object.assign({ root: meta.root || '', editor: 'vscode', mapW: null, view: 'code' }, safeJson(localStorage.getItem(prefsKey)));\n  function safeJson(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }\n  const savePrefs = () => { try { localStorage.setItem(prefsKey, JSON.stringify(prefs)); } catch { /* private mode */ } };\n\n  const state = { sel: null, view: prefs.view === 'diagram' ? 'diagram' : 'code', file: null, explainOpen: new Set(), annoExpl: false };\n\n  // ---------------------------------------------------------------- text helpers\n  const REF_RE = /\\[((?:\\d+[a-z]{1,2})(?:\\s*,\\s*\\d+[a-z]{1,2})*)\\]/g;\n  function refs(html) {\n    return html.replace(REF_RE, (m, list) => {\n      const ids = list.split(/\\s*,\\s*/);\n      if (!ids.every((id) => byId.has(id))) return m;\n      return '<span class=\"refs\">[' + ids.map((id) => '<a class=\"ref\" data-ref=\"' + id + '\">' + id + '</a>').join(', ') + ']</span>';\n    });\n  }"
+          },
           "narrativeHash": "3413146249e0"
         },
         {
@@ -347,15 +356,15 @@
           "description": "Selección, vista, archivo abierto y explicaciones desplegadas.",
           "explanation": "Todo el visor gira alrededor de este pequeño objeto. `sel` lo escribe solo `select` [6a]; `view` lo escribe `setView` [6f]; `file` evita re-renderizar el archivo si ya está abierto [4e]; `annoExpl` recuerda si la explicación en línea del código está abierta entre selecciones. Mantener el estado mínimo hace que las vistas sean derivables y fáciles de razonar.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 47,
+          "lineNumber": 102,
           "lineContent": "const state = { sel: null, view: prefs.view === 'diagram' ? 'diagram' : 'code', file: null, explainOpen: new Set(), annoExpl: false };",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "bde1076d26cc",
           "snippet": {
-            "startLine": 44,
+            "startLine": 99,
             "code": "  function safeJson(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }\n  const savePrefs = () => { try { localStorage.setItem(prefsKey, JSON.stringify(prefs)); } catch { /* private mode */ } };\n\n  const state = { sel: null, view: prefs.view === 'diagram' ? 'diagram' : 'code', file: null, explainOpen: new Set(), annoExpl: false };\n\n  // ---------------------------------------------------------------- text helpers\n  const REF_RE = /\\[((?:\\d+[a-z]{1,2})(?:\\s*,\\s*\\d+[a-z]{1,2})*)\\]/g;\n  function refs(html) {\n    return html.replace(REF_RE, (m, list) => {\n      const ids = list.split(/\\s*,\\s*/);\n      if (!ids.every((id) => byId.has(id))) return m;\n      return '<span class=\"refs\">[' + ids.map((id) => '<a class=\"ref\" data-ref=\"' + id + '\">' + id + '</a>').join(', ') + ']</span>';\n    });\n  }\n  function inline(s) {\n    return refs(\n      esc(s)\n        .replace(/`([^`]+)`/g, '<code>$1</code>')"
           },
-          "ctxHash": "bde1076d26cc",
           "narrativeHash": "bde1076d26cc"
         },
         {
@@ -364,17 +373,16 @@
           "description": "Selecciona la ubicación del hash o la primera.",
           "explanation": "Es la última línea del arranque, tras `renderMapPane` [3a] y `setView`. Leer `location.hash` permite compartir enlaces del tipo `mapa.html#3b`. Como el arranque pasa por la misma `select` [6a] que cualquier clic, el estado inicial queda sincronizado en las tres vistas sin código especial.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 1072,
+          "lineNumber": 1154,
           "lineContent": "select(byId.has(initial) ? initial : locs[0].id, { from: 'boot' });",
-          "status": "moved",
-          "fileHash": "9845fbe7136b",
+          "status": "ok",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "4801e5c2936b",
           "snippet": {
-            "startLine": 1069,
+            "startLine": 1151,
             "code": "  renderLegend();\n  setView(state.view);\n  const initial = decodeURIComponent(location.hash.slice(1));\n  select(byId.has(initial) ? initial : locs[0].id, { from: 'boot' });\n})();\n"
           },
-          "ctxHash": "4801e5c2936b",
-          "narrativeHash": "4801e5c2936b",
-          "note": "line 1066 -> 1072"
+          "narrativeHash": "4801e5c2936b"
         }
       ],
       "tree": [
@@ -421,43 +429,43 @@
       "title": "Panel del mapa",
       "description": "Render de cabecera, guías y árbol anotado, y delegación de clics.",
       "diagramTitle": "Map Pane Rendering",
-      "motivation": "El panel es donde se lee el mapa: historia, motivación y detalles de cada traza, y el árbol de ubicaciones. Debe convertir prosa markdown en HTML seguro, hacer clicables las citas [1a] y ofrecer explicaciones bajo demanda sin pagar el coste de renderizarlas todas de entrada.",
-      "details": "`renderMapPane` [3a] genera de una vez todo el HTML del panel: chips de metadatos (fecha, commit, anclajes dudosos, explicaciones por revisar), resumen, botones de historia/explicaciones/guías y una sección por traza con su guía oculta, avisos de deriva y botón para copiarla. El árbol se construye recursivamente con `treeHtml` [3b], que usa un `Set` `seen` para pintar la primera aparición de una ubicación como tarjeta completa y las siguientes como referencia compacta [3c].\n\nToda la prosa pasa por `md` [3e] (párrafos, listas, encabezados, bloques de código) y por `inline`, que termina en `refs` [3d]: solo las citas cuyos ids existen se convierten en `<a data-ref>`. Las explicaciones se renderizan perezosamente en `toggleExplain` [3f], la primera vez que se abren. Un único listener delegado [3g] en el panel enruta los clics: los botones de copiar traza/nodo van al portapapeles, referencias y tarjetas van a `select` [6a], y botones de guía, explicación e historia alternan visibilidad.",
+      "motivation": "El panel es donde se lee el mapa: historia, motivación y detalles de cada traza, y el árbol de ubicaciones con su estado (deriva, fact-check, ejecución, notas del equipo). Debe convertir prosa markdown en HTML seguro, hacer clicables las citas [1a] y ofrecer explicaciones bajo demanda sin pagar el coste de renderizarlas todas de entrada.",
+      "details": "`renderMapPane` [3a] genera de una vez todo el HTML del panel: chips de metadatos (fecha, commit, recuento de trazas y nodos, anclajes dudosos, nodos verificados por fact-check, nodos ejecutados por los tests, mapa de tipo overview, explicaciones por revisar), resumen, botones de historia/explicaciones/guías y una sección por traza con su guía oculta, avisos de deriva y botón para copiarla. El árbol se construye recursivamente con `treeHtml` [3b], que usa un `Set` `seen` para pintar la primera aparición de una ubicación como tarjeta completa y las siguientes como referencia compacta [3c]. Cada tarjeta completa suma insignias (`badges`) y un bloque de extras (`extrasHtml`): incidencias del fact-check, línea de ejecución, enlace al mapa detallado y notas del equipo con «+ Note».\n\nToda la prosa pasa por `md` [3e] (párrafos, listas, encabezados, bloques de código) y por `inline`, que termina en `refs` [3d]: solo las citas cuyos ids existen se convierten en `<a data-ref>`. Las explicaciones se renderizan perezosamente en `toggleExplain` [3f], la primera vez que se abren. Un único listener delegado [3g] en el panel enruta los clics: «+ Note» y los enlaces a otros mapas, los botones de copiar traza/nodo, referencias y tarjetas (que van a `select` [6a]) y los botones de guía, explicación e historia que alternan visibilidad.",
       "locations": [
         {
           "id": "3a",
           "title": "renderMapPane",
-          "description": "Genera cabecera, guías y árboles de todas las trazas.",
-          "explanation": "Se llama una sola vez en el arranque y escribe `mapPane.innerHTML` de golpe; después, la interacción solo alterna clases y atributos `hidden`. Los chips leen `meta.anchors` para avisar de anclajes aproximados o rotos, y suman un chip «explanations to review» si hay nodos con deriva narrativa. La historia y cada guía de traza anteponen un `driftNote` cuando su prosa puede estar desactualizada. Cada sección de traza lleva `--tc` con su color [2b] y un botón ⧉ para copiar la traza como contexto.",
+          "description": "Genera cabecera con chips de estado, guías y árboles de todas las trazas.",
+          "explanation": "Se llama una sola vez en el arranque y escribe `mapPane.innerHTML` de golpe; después, la interacción solo alterna clases y atributos `hidden`. Los chips leen `meta.anchors` para avisar de anclajes aproximados o rotos y recorren `STATES` (el `states` de [1f]) para mostrar «✓ n/N verified» (en rojo si hay nodos `unsupported`) y «▶ n/m executed»; añaden «overview map» en mapas de tipo overview y «explanations to review» si hay nodos con deriva narrativa. La historia y cada guía de traza anteponen un `driftNote` cuando su prosa puede estar desactualizada. Cada sección de traza lleva `--tc` con su color [2b] y un botón ⧉ para copiar la traza como contexto.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 158,
+          "lineNumber": 213,
           "lineContent": "function renderMapPane() {",
           "symbol": "renderMapPane",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "4fab234f1ac9",
           "snippet": {
-            "startLine": 155,
-            "code": "  const STATUS = { fuzzy: '≈', unresolved: '⚠', missing: '⚠' };\n  const mapPane = $('#mapPane');\n\n  function renderMapPane() {\n    const a = meta.anchors || {};\n    const chips = [];\n    if (meta.createdAt) chips.push('<span class=\"chip\">Created ' + esc(new Date(meta.createdAt).toLocaleDateString()) + '</span>');\n    if (meta.commit) chips.push('<span class=\"chip\" title=\"' + esc(meta.commit) + '\">@ ' + esc(meta.commit.slice(0, 8)) + (meta.branch ? ' · ' + esc(meta.branch) : '') + '</span>');\n    chips.push('<span class=\"chip\">' + traces.length + ' traces · ' + locs.length + ' nodes</span>');\n    const broken = (a.unresolved || 0) + (a.missing || 0);\n    if (broken) chips.push('<span class=\"chip bad\">' + broken + ' unverified anchors</span>');\n    if (a.fuzzy) chips.push('<span class=\"chip warn\">' + a.fuzzy + ' approximate</span>');\n    if (staleNodes.size) chips.push('<span class=\"chip warn\" title=\"Code changed after these nodes were explained\">' + staleNodes.size + ' explanations to review</span>');\n\n    const head =\n      '<div class=\"mp-head\"><h1>' + esc(doc.title) + '</h1><div class=\"chips\">' + chips.join('') + '</div>' +\n      '<div class=\"summary\">' + inline(doc.description) + '</div>' +\n      '<div class=\"mp-actions\">' +"
+            "startLine": 210,
+            "code": "  const STATUS = { fuzzy: '≈', unresolved: '⚠', missing: '⚠' };\n  const mapPane = $('#mapPane');\n\n  function renderMapPane() {\n    const a = meta.anchors || {};\n    const chips = [];\n    if (meta.createdAt) chips.push('<span class=\"chip\">Created ' + esc(new Date(meta.createdAt).toLocaleDateString()) + '</span>');\n    if (meta.commit) chips.push('<span class=\"chip\" title=\"' + esc(meta.commit) + '\">@ ' + esc(meta.commit.slice(0, 8)) + (meta.branch ? ' · ' + esc(meta.branch) : '') + '</span>');\n    chips.push('<span class=\"chip\">' + traces.length + ' traces · ' + locs.length + ' nodes</span>');\n    const broken = (a.unresolved || 0) + (a.missing || 0);\n    if (broken) chips.push('<span class=\"chip bad\">' + broken + ' unverified anchors</span>');\n    if (a.fuzzy) chips.push('<span class=\"chip warn\">' + a.fuzzy + ' approximate</span>');\n    const sum = { supported: 0, partial: 0, unsupported: 0, hit: 0, miss: 0 };\n    for (const l of locs) {\n      const st = STATES[l.id] || {};\n      if (sum[st.check] != null) sum[st.check]++;\n      if (sum[st.exec] != null) sum[st.exec]++;\n    }"
           },
-          "ctxHash": "547ed2e852e2",
-          "narrativeHash": "547ed2e852e2"
+          "narrativeHash": "4fab234f1ac9"
         },
         {
           "id": "3b",
           "title": "treeHtml recursivo",
-          "description": "Convierte el árbol anotado en listas anidadas.",
-          "explanation": "Cada nodo del árbol puede ser una referencia a ubicación (`ref`) o un paso solo-etiqueta. Las ubicaciones se pintan como tarjetas con id, título, iconos de estado (≈/⚠ por anclaje, ◔ si la prosa tiene deriva), archivo, línea resaltada con `hl`, descripción y botones «Explain» y «Copy context». Las etiquetas se pintan como `.lbl` y el `via` encima como `↳ ...`. El resultado es `<ul class=\"tt\">` anidado que el CSS dibuja como árbol.",
+          "description": "Convierte el árbol anotado en listas anidadas con insignias y extras.",
+          "explanation": "Cada nodo del árbol puede ser una referencia a ubicación (`ref`) o un paso solo-etiqueta. Las ubicaciones se pintan como tarjetas con id, título, iconos de estado (≈/⚠ por anclaje, ◔ si la prosa tiene deriva, y las de `badges`: ✓/◑/✗ fact-check, ▶/○ ejecución, ↗ mapa detallado, ✎ notas), archivo, línea resaltada con `hl`, descripción y botones «Explain» y «Copy context». Debajo, `extrasHtml` añade incidencias del fact-check, la línea de ejecución, el enlace `mapRef` a otro mapa y las notas del equipo con su botón «+ Note». Las etiquetas se pintan como `.lbl` y el `via` encima como `↳ ...`. El resultado es `<ul class=\"tt\">` anidado que el CSS dibuja como árbol.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 181,
+          "lineNumber": 245,
           "lineContent": "const treeHtml = (nodes) => {",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "c0374243ba28",
           "snippet": {
-            "startLine": 178,
-            "code": "      '</div>';\n\n    const seen = new Set();\n    const treeHtml = (nodes) => {\n      if (!nodes || !nodes.length) return '';\n      return '<ul class=\"tt\">' + nodes.map((n) => {\n        const l = n.ref && byId.get(n.ref);\n        let inner;\n        if (l && seen.has(l.id)) {\n          inner = '<div class=\"loc ref-again\" data-id=\"' + l.id + '\" style=\"--tc:' + l.trace.color + '\"><div class=\"loc-top\"><span class=\"lid\">' + l.id + '</span><span class=\"lt\">' + esc(n.label || l.title) + '</span></div></div>';\n        } else if (l) {\n          seen.add(l.id);\n          const st =\n            (STATUS[l.status] ? '<span class=\"st ' + l.status + '\" title=\"' + esc(l.note || l.status) + '\">' + STATUS[l.status] + '</span>' : '') +\n            (staleNodes.has(l.id) ? '<span class=\"st drift\" title=\"Code changed after this node was explained\">◔</span>' : '');\n          inner =\n            '<div class=\"loc\" data-id=\"' + l.id + '\" tabindex=\"0\" style=\"--tc:' + l.trace.color + '\">' +\n            '<div class=\"loc-top\"><span class=\"lid\">' + l.id + '</span><span class=\"lt\">' + esc(n.label || l.title) + '</span>' + st +"
+            "startLine": 242,
+            "code": "      '</div>';\n\n    const seen = new Set();\n    const treeHtml = (nodes) => {\n      if (!nodes || !nodes.length) return '';\n      return '<ul class=\"tt\">' + nodes.map((n) => {\n        const l = n.ref && byId.get(n.ref);\n        let inner;\n        if (l && seen.has(l.id)) {\n          inner = '<div class=\"loc ref-again\" data-id=\"' + l.id + '\" style=\"--tc:' + l.trace.color + '\"><div class=\"loc-top\"><span class=\"lid\">' + l.id + '</span><span class=\"lt\">' + esc(n.label || l.title) + '</span></div></div>';\n        } else if (l) {\n          seen.add(l.id);\n          const st =\n            (STATUS[l.status] ? '<span class=\"st ' + l.status + '\" title=\"' + esc(l.note || l.status) + '\">' + STATUS[l.status] + '</span>' : '') +\n            (staleNodes.has(l.id) ? '<span class=\"st drift\" title=\"Code changed after this node was explained\">◔</span>' : '') +\n            badges(l);\n          inner =\n            '<div class=\"loc\" data-id=\"' + l.id + '\" tabindex=\"0\" style=\"--tc:' + l.trace.color + '\">' +"
           },
-          "ctxHash": "2986baa29f8b",
-          "narrativeHash": "2986baa29f8b"
+          "narrativeHash": "c0374243ba28"
         },
         {
           "id": "3c",
@@ -465,15 +473,15 @@
           "description": "Segunda aparición de una ubicación: tarjeta compacta ref-again.",
           "explanation": "Un árbol puede volver a una ubicación ya mostrada (`{\"ref\": \"1a\"}` más abajo). Para no duplicar tarjetas ni explicaciones, solo la primera aparición es completa; las demás llevan la clase `ref-again`. Por eso `select` [6b] y `toggleExplain` [3f] buscan siempre `.loc[data-id]:not(.ref-again)`: la tarjeta canónica es única.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 186,
+          "lineNumber": 250,
           "lineContent": "if (l && seen.has(l.id)) {",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
-          "snippet": {
-            "startLine": 183,
-            "code": "      return '<ul class=\"tt\">' + nodes.map((n) => {\n        const l = n.ref && byId.get(n.ref);\n        let inner;\n        if (l && seen.has(l.id)) {\n          inner = '<div class=\"loc ref-again\" data-id=\"' + l.id + '\" style=\"--tc:' + l.trace.color + '\"><div class=\"loc-top\"><span class=\"lid\">' + l.id + '</span><span class=\"lt\">' + esc(n.label || l.title) + '</span></div></div>';\n        } else if (l) {\n          seen.add(l.id);\n          const st =\n            (STATUS[l.status] ? '<span class=\"st ' + l.status + '\" title=\"' + esc(l.note || l.status) + '\">' + STATUS[l.status] + '</span>' : '') +\n            (staleNodes.has(l.id) ? '<span class=\"st drift\" title=\"Code changed after this node was explained\">◔</span>' : '');\n          inner =\n            '<div class=\"loc\" data-id=\"' + l.id + '\" tabindex=\"0\" style=\"--tc:' + l.trace.color + '\">' +\n            '<div class=\"loc-top\"><span class=\"lid\">' + l.id + '</span><span class=\"lt\">' + esc(n.label || l.title) + '</span>' + st +\n            '<span class=\"lf\" title=\"' + esc(l.path) + '\">' + esc(base(l.path)) + '</span></div>' +\n            '<div class=\"loc-code\"><span class=\"ln\">' + l.lineNumber + '</span><code>' + hl(l.lineContent || '', extOf(l.path)) + '</code></div>' +\n            '<div class=\"loc-more\"><div class=\"loc-desc\">' + inline(l.description) + '</div>' +\n            '<button class=\"explain\" data-explain=\"' + l.id + '\">' + (l.explanation ? 'Show explanation' : 'Explain') + '</button> ' +\n            '<button class=\"explain\" data-copy-node=\"' + l.id + '\" title=\"Copy this node (with its trace context) as markdown for an agent\">Copy context</button>' +"
-          },
+          "fileHash": "ac1ff9154972",
           "ctxHash": "5be4b04fb6e8",
+          "snippet": {
+            "startLine": 247,
+            "code": "      return '<ul class=\"tt\">' + nodes.map((n) => {\n        const l = n.ref && byId.get(n.ref);\n        let inner;\n        if (l && seen.has(l.id)) {\n          inner = '<div class=\"loc ref-again\" data-id=\"' + l.id + '\" style=\"--tc:' + l.trace.color + '\"><div class=\"loc-top\"><span class=\"lid\">' + l.id + '</span><span class=\"lt\">' + esc(n.label || l.title) + '</span></div></div>';\n        } else if (l) {\n          seen.add(l.id);\n          const st =\n            (STATUS[l.status] ? '<span class=\"st ' + l.status + '\" title=\"' + esc(l.note || l.status) + '\">' + STATUS[l.status] + '</span>' : '') +\n            (staleNodes.has(l.id) ? '<span class=\"st drift\" title=\"Code changed after this node was explained\">◔</span>' : '') +\n            badges(l);\n          inner =\n            '<div class=\"loc\" data-id=\"' + l.id + '\" tabindex=\"0\" style=\"--tc:' + l.trace.color + '\">' +\n            '<div class=\"loc-top\"><span class=\"lid\">' + l.id + '</span><span class=\"lt\">' + esc(n.label || l.title) + '</span>' + st +\n            '<span class=\"lf\" title=\"' + esc(l.path) + '\">' + esc(base(l.path)) + '</span></div>' +\n            '<div class=\"loc-code\"><span class=\"ln\">' + l.lineNumber + '</span><code>' + hl(l.lineContent || '', extOf(l.path)) + '</code></div>' +\n            '<div class=\"loc-more\"><div class=\"loc-desc\">' + inline(l.description) + '</div>' +\n            '<button class=\"explain\" data-explain=\"' + l.id + '\">' + (l.explanation ? 'Show explanation' : 'Explain') + '</button> ' +"
+          },
           "narrativeHash": "5be4b04fb6e8"
         },
         {
@@ -482,15 +490,15 @@
           "description": "Convierte [1a, 2b] en enlaces data-ref si los ids existen.",
           "explanation": "Esta es la magia que hace navegable la prosa: cualquier `[3b]` o `[1a, 2c]` en historia, guías o explicaciones se vuelve un enlace con `data-ref`. Si algún id de la lista no existe en `byId` [2c], se deja el texto intacto, evitando enlaces rotos. Los clics sobre estos enlaces los capturan los listeners delegados [3g, 4g] y terminan en `select` [6a].",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 52,
+          "lineNumber": 107,
           "lineContent": "return html.replace(REF_RE, (m, list) => {",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "1ee17e768e3b",
           "snippet": {
-            "startLine": 49,
+            "startLine": 104,
             "code": "  // ---------------------------------------------------------------- text helpers\n  const REF_RE = /\\[((?:\\d+[a-z]{1,2})(?:\\s*,\\s*\\d+[a-z]{1,2})*)\\]/g;\n  function refs(html) {\n    return html.replace(REF_RE, (m, list) => {\n      const ids = list.split(/\\s*,\\s*/);\n      if (!ids.every((id) => byId.has(id))) return m;\n      return '<span class=\"refs\">[' + ids.map((id) => '<a class=\"ref\" data-ref=\"' + id + '\">' + id + '</a>').join(', ') + ']</span>';\n    });\n  }\n  function inline(s) {\n    return refs(\n      esc(s)\n        .replace(/`([^`]+)`/g, '<code>$1</code>')\n        .replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')\n        .replace(/(^|[^*\\w])\\*([^*\\n]+)\\*(?!\\w)/g, '$1<em>$2</em>')\n        .replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g, '<a href=\"$2\" target=\"_blank\" rel=\"noopener\">$1</a>'),\n    );\n  }"
           },
-          "ctxHash": "1ee17e768e3b",
           "narrativeHash": "1ee17e768e3b"
         },
         {
@@ -499,16 +507,16 @@
           "description": "Renderizador markdown mínimo: párrafos, listas, encabezados, código.",
           "explanation": "En vez de incluir una librería, el cliente implementa lo justo: bloques de código cercados, encabezados (todos como `<h5>` para no competir con la jerarquía del panel), listas ordenadas y no ordenadas y párrafos. El texto en línea pasa por `inline`, que escapa HTML antes de aplicar código, negritas, cursivas y enlaces, y luego `refs` [3d]. Escapar primero es lo que mantiene seguro el contenido generado por agentes.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 67,
+          "lineNumber": 122,
           "lineContent": "function md(src) {",
           "symbol": "md",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "7429d1208d73",
           "snippet": {
-            "startLine": 64,
+            "startLine": 119,
             "code": "        .replace(/\\[([^\\]]+)\\]\\((https?:[^)\\s]+)\\)/g, '<a href=\"$2\" target=\"_blank\" rel=\"noopener\">$1</a>'),\n    );\n  }\n  function md(src) {\n    const out = [];\n    let list = null;\n    let para = [];\n    let code = null;\n    const flushPara = () => { if (para.length) { out.push('<p>' + inline(para.join(' ')) + '</p>'); para = []; } };\n    const closeList = () => { if (list) { out.push('</' + list + '>'); list = null; } };\n    for (const raw of String(src || '').split(/\\r?\\n/)) {\n      if (code !== null) {\n        if (/^\\s*```/.test(raw)) { out.push('<pre><code>' + esc(code.join('\\n')) + '</code></pre>'); code = null; } else code.push(raw);\n        continue;\n      }\n      if (/^\\s*```/.test(raw)) { flushPara(); closeList(); code = []; continue; }\n      const h = raw.match(/^#{1,6}\\s+(.*)/);\n      if (h) { flushPara(); closeList(); out.push('<h5>' + inline(h[1]) + '</h5>'); continue; }"
           },
-          "ctxHash": "7429d1208d73",
           "narrativeHash": "7429d1208d73"
         },
         {
@@ -517,34 +525,34 @@
           "description": "Renderiza la explicación solo la primera vez que se abre.",
           "explanation": "La caja `.expl` nace vacía y oculta; al abrirla por primera vez se llena con `explanationHtml`, que usa `md` [3e] o un aviso de «pide `/waymark enrich`» si falta prosa. El parámetro `force` permite que «Explain all nodes» abra o cierre todas a la vez y que la tecla `e` [6g] alterne la seleccionada.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 242,
+          "lineNumber": 307,
           "lineContent": "function toggleExplain(id, force) {",
           "symbol": "toggleExplain",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "5a287a32da03",
           "snippet": {
-            "startLine": 239,
+            "startLine": 304,
             "code": "    if (show) sec.classList.remove('closed');\n  }\n\n  function toggleExplain(id, force) {\n    const card = $('.loc[data-id=\"' + id + '\"]:not(.ref-again)', mapPane);\n    if (!card) return;\n    const box = $('.expl', card);\n    const btn = $('.explain', card);\n    const l = byId.get(id);\n    const show = force == null ? box.hidden : force;\n    if (show && !box.innerHTML) box.innerHTML = explanationHtml(l);\n    box.hidden = !show;\n    card.classList.toggle('open', show);\n    btn.classList.toggle('on', show);\n    btn.textContent = show ? 'Hide explanation' : l.explanation ? 'Show explanation' : 'Explain';\n  }\n\n  mapPane.addEventListener('click', (e) => {"
           },
-          "ctxHash": "5a287a32da03",
           "narrativeHash": "5a287a32da03"
         },
         {
           "id": "3g",
           "title": "Clic delegado",
-          "description": "Un único listener enruta copias, refs, guías, explicaciones y tarjetas.",
-          "explanation": "Como el panel se genera con `innerHTML`, poner listeners por elemento sería frágil; la delegación con `closest` resuelve todo en un sitio. El orden importa: primero los botones de copiar traza/nodo (que leen `traceMd`/`nodeMd` [1f]), luego enlaces `data-ref`, «See more», «Explain», historia y botones globales, y solo al final la tarjeta completa (`select(card.dataset.id)`) y el plegado de trazas. Los botones internos llaman a `stopPropagation`, así que pulsar «Explain» o «Copy context» dentro de una tarjeta no la selecciona por accidente.",
+          "description": "Un único listener enruta notas, mapas, copias, refs, guías y tarjetas.",
+          "explanation": "Como el panel se genera con `innerHTML`, poner listeners por elemento sería frágil; la delegación con `closest` resuelve todo en un sitio. El orden importa: primero «+ Note» (`addNote`: dentro de VS Code pide la nota a la extensión; fuera, la solicita con `prompt` y copia el comando `waymark note` para ejecutarlo en el repo) y los enlaces a otros mapas (`data-open-map`, que se envían al host como `openMap`); luego los botones de copiar traza/nodo (que leen `traceMd`/`nodeMd` [1f]), enlaces `data-ref`, «See more», «Explain», historia y botones globales, y solo al final la tarjeta completa (`select(card.dataset.id)`) y el plegado de trazas. Los botones internos llaman a `stopPropagation`, así que pulsarlos dentro de una tarjeta no la selecciona por accidente.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 256,
+          "lineNumber": 321,
           "lineContent": "mapPane.addEventListener('click', (e) => {",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "a275c058be18",
           "snippet": {
-            "startLine": 253,
-            "code": "    btn.textContent = show ? 'Hide explanation' : l.explanation ? 'Show explanation' : 'Explain';\n  }\n\n  mapPane.addEventListener('click', (e) => {\n    const ct = e.target.closest('[data-copy-trace]');\n    if (ct) { e.stopPropagation(); return copy(ct, (DATA.traceMd || {})[ct.dataset.copyTrace] || '', '⧉'); }\n    const cn = e.target.closest('[data-copy-node]');\n    if (cn) { e.stopPropagation(); return copy(cn, (DATA.nodeMd || {})[cn.dataset.copyNode] || '', 'Copy context'); }\n    const r = e.target.closest('[data-ref]');\n    if (r) { e.preventDefault(); return select(r.dataset.ref); }\n    const sm = e.target.closest('[data-guide]');\n    if (sm) { e.stopPropagation(); return toggleGuide(sm.dataset.guide); }\n    const ex = e.target.closest('[data-explain]');\n    if (ex) { e.stopPropagation(); return toggleExplain(ex.dataset.explain); }\n    if (e.target.closest('#storyBtn')) {\n      const s = $('#story');\n      s.hidden = !s.hidden;\n      e.target.textContent = s.hidden ? 'Read the full story' : 'Hide the story';"
+            "startLine": 318,
+            "code": "    btn.textContent = show ? 'Hide explanation' : l.explanation ? 'Show explanation' : 'Explain';\n  }\n\n  mapPane.addEventListener('click', (e) => {\n    const an = e.target.closest('[data-add-note]');\n    if (an) { e.stopPropagation(); return addNote(an.dataset.addNote); }\n    const om = e.target.closest('[data-open-map]');\n    if (om) { e.stopPropagation(); return host && host.postMessage({ type: 'openMap', ref: om.dataset.openMap }); }\n    const ct = e.target.closest('[data-copy-trace]');\n    if (ct) { e.stopPropagation(); return copy(ct, (DATA.traceMd || {})[ct.dataset.copyTrace] || '', '⧉'); }\n    const cn = e.target.closest('[data-copy-node]');\n    if (cn) { e.stopPropagation(); return copy(cn, (DATA.nodeMd || {})[cn.dataset.copyNode] || '', 'Copy context'); }\n    const r = e.target.closest('[data-ref]');\n    if (r) { e.preventDefault(); return select(r.dataset.ref); }\n    const sm = e.target.closest('[data-guide]');\n    if (sm) { e.stopPropagation(); return toggleGuide(sm.dataset.guide); }\n    const ex = e.target.closest('[data-explain]');\n    if (ex) { e.stopPropagation(); return toggleExplain(ex.dataset.explain); }"
           },
-          "ctxHash": "7209107ee8e8",
-          "narrativeHash": "7209107ee8e8"
+          "narrativeHash": "a275c058be18"
         }
       ],
       "tree": [
@@ -552,7 +560,7 @@
           "ref": "3a",
           "children": [
             {
-              "label": "chips: fecha · commit · anclajes dudosos"
+              "label": "chips: fecha · commit · anclajes · ✓ verified · ▶ executed"
             },
             {
               "ref": "3e",
@@ -573,7 +581,7 @@
                   "via": "si ya vista"
                 },
                 {
-                  "label": "tarjeta .loc con hl(lineContent)",
+                  "label": "tarjeta .loc con hl(lineContent) + badges + extrasHtml",
                   "via": "primera aparición"
                 }
               ]
@@ -583,6 +591,9 @@
         {
           "ref": "3g",
           "children": [
+            {
+              "label": "+ Note / open-map → addNote · host"
+            },
             {
               "label": "data-ref / tarjeta → select(id)",
               "via": "clic"
@@ -597,7 +608,7 @@
           ]
         }
       ],
-      "narrativeHash": "b275b3a48cb6"
+      "narrativeHash": "6511ad3281e7"
     },
     {
       "id": "4",
@@ -613,16 +624,16 @@
           "description": "Renderiza el archivo activo y actualiza las pestañas.",
           "explanation": "Fija `state.file` y repinta las pestañas, que se ordenan por `fileOrder` [2d] y muestran cuántas ubicaciones tiene cada archivo. Construye todas las filas como cadenas y hace un único `innerHTML`, lo que es rápido incluso para archivos de miles de líneas. Al pulsar una pestaña no se abre el archivo directamente: se selecciona su primera ubicación, para que el resto de vistas sigan sincronizadas.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 319,
+          "lineNumber": 388,
           "lineContent": "function renderFile(p) {",
           "symbol": "renderFile",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "3bb9de9d89b1",
           "snippet": {
-            "startLine": 316,
+            "startLine": 385,
             "code": "    if (first) select(first.id);\n  });\n\n  function renderFile(p) {\n    state.file = p;\n    renderTabs();\n    const ext = extOf(p);\n    const markers = new Map();\n    for (const l of locs) if (l.path === p) {\n      if (!markers.has(l.lineNumber)) markers.set(l.lineNumber, []);\n      markers.get(l.lineNumber).push(l);\n    }\n    const rows = [];\n    const emit = (no, text) => {\n      const mk = markers.get(no);\n      const gut = mk ? mk.map((l) => '<a class=\"gm\" data-ref=\"' + l.id + '\" style=\"--tc:' + l.trace.color + '\" title=\"' + esc(l.title) + '\">' + l.id + '</a>').join('') : '';\n      rows.push('<div class=\"cl' + (mk ? ' anchored' : '') + '\" data-line=\"' + no + '\"><span class=\"gut\">' + gut + '</span><span class=\"no\">' + no + '</span><span class=\"tx\">' + hl(text, ext) + '</span></div>');\n    };"
           },
-          "ctxHash": "3bb9de9d89b1",
           "narrativeHash": "3bb9de9d89b1"
         },
         {
@@ -631,15 +642,15 @@
           "description": "Agrupa ubicaciones por número de línea para el canalón.",
           "explanation": "Varias ubicaciones (incluso de trazas distintas) pueden apuntar a la misma línea, así que el mapa guarda arrays. `emit` usa este mapa para pintar uno o más `<a class=\"gm\" data-ref>` coloreados por traza en el canalón y la clase `anchored` en la fila. Es como poner chinchetas de colores en el margen de un libro.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 324,
+          "lineNumber": 393,
           "lineContent": "for (const l of locs) if (l.path === p) {",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "e386ef1e64d4",
           "snippet": {
-            "startLine": 321,
+            "startLine": 390,
             "code": "    renderTabs();\n    const ext = extOf(p);\n    const markers = new Map();\n    for (const l of locs) if (l.path === p) {\n      if (!markers.has(l.lineNumber)) markers.set(l.lineNumber, []);\n      markers.get(l.lineNumber).push(l);\n    }\n    const rows = [];\n    const emit = (no, text) => {\n      const mk = markers.get(no);\n      const gut = mk ? mk.map((l) => '<a class=\"gm\" data-ref=\"' + l.id + '\" style=\"--tc:' + l.trace.color + '\" title=\"' + esc(l.title) + '\">' + l.id + '</a>').join('') : '';\n      rows.push('<div class=\"cl' + (mk ? ' anchored' : '') + '\" data-line=\"' + no + '\"><span class=\"gut\">' + gut + '</span><span class=\"no\">' + no + '</span><span class=\"tx\">' + hl(text, ext) + '</span></div>');\n    };\n    if (FILES[p] != null) {\n      FILES[p].split('\\n').forEach((t, i) => emit(i + 1, t));\n    } else {\n      rows.push('<div class=\"code-note\">Only snippets are available for this file (it was missing or too large to embed).</div>');\n      const lines = new Map();"
           },
-          "ctxHash": "e386ef1e64d4",
           "narrativeHash": "e386ef1e64d4"
         },
         {
@@ -648,33 +659,33 @@
           "description": "Si el archivo está embebido, pinta todas sus líneas.",
           "explanation": "Camino feliz: el contenido normalizado en [1d] se divide por `\\n` y cada línea se emite con número y resaltado `hl`. Que la numeración coincida con `lineNumber` depende de que el servidor haya quitado los `\\r`. Comparar con `!= null` permite archivos vacíos (cadena vacía) como válidos.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 334,
+          "lineNumber": 403,
           "lineContent": "if (FILES[p] != null) {",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "c822cb265f1a",
           "snippet": {
-            "startLine": 331,
+            "startLine": 400,
             "code": "      const gut = mk ? mk.map((l) => '<a class=\"gm\" data-ref=\"' + l.id + '\" style=\"--tc:' + l.trace.color + '\" title=\"' + esc(l.title) + '\">' + l.id + '</a>').join('') : '';\n      rows.push('<div class=\"cl' + (mk ? ' anchored' : '') + '\" data-line=\"' + no + '\"><span class=\"gut\">' + gut + '</span><span class=\"no\">' + no + '</span><span class=\"tx\">' + hl(text, ext) + '</span></div>');\n    };\n    if (FILES[p] != null) {\n      FILES[p].split('\\n').forEach((t, i) => emit(i + 1, t));\n    } else {\n      rows.push('<div class=\"code-note\">Only snippets are available for this file (it was missing or too large to embed).</div>');\n      const lines = new Map();\n      for (const l of locs) if (l.path === p && l.snippet) l.snippet.code.split('\\n').forEach((t, i) => lines.set(l.snippet.startLine + i, t));\n      if (!lines.size) for (const l of locs) if (l.path === p) lines.set(l.lineNumber, l.lineContent || '');\n      let prev = null;\n      for (const no of [...lines.keys()].sort((a, b) => a - b)) {\n        if (prev !== null && no !== prev + 1) rows.push('<div class=\"gap\">⋯</div>');\n        emit(no, lines.get(no));\n        prev = no;\n      }\n    }\n    codeEl.innerHTML = rows.join('');"
           },
-          "ctxHash": "c822cb265f1a",
           "narrativeHash": "c822cb265f1a"
         },
         {
           "id": "4d",
           "title": "Fallback a fragmentos",
           "description": "Sin archivo embebido, muestra fragmentos guardados con huecos.",
-          "explanation": "Si `collectFiles` omitió el archivo por tamaño o porque no existía [1c], el visor muestra una nota y reconstruye las líneas a partir de `l.snippet` de cada ubicación; si ni siquiera hay fragmentos, usa `lineContent`. Las líneas se ordenan y entre bloques no contiguos se inserta `⋯`. Así el visor degrada con elegancia en lugar de quedarse en blanco.",
+          "explanation": "Es la rama `else` de [4c]: si `collectFiles` omitió el archivo por tamaño o porque no existía [1c], el visor antepone la nota «Only snippets are available…» y reconstruye las líneas a partir de `l.snippet` de cada ubicación del archivo; si ni siquiera hay fragmentos, usa `lineContent`. Las líneas se ordenan y entre bloques no contiguos se inserta `⋯`. Así el visor degrada con elegancia en lugar de quedarse en blanco, y los marcadores [4b] siguen apareciendo sobre las líneas que sí se conocen.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 336,
-          "lineContent": "} else {",
+          "lineNumber": 406,
+          "lineContent": "rows.push('<div class=\"code-note\">Only snippets are available for this file (it was missing or too large to embed).</div>');",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "cf1eae2d2c9f",
           "snippet": {
-            "startLine": 333,
-            "code": "    };\n    if (FILES[p] != null) {\n      FILES[p].split('\\n').forEach((t, i) => emit(i + 1, t));\n    } else {\n      rows.push('<div class=\"code-note\">Only snippets are available for this file (it was missing or too large to embed).</div>');\n      const lines = new Map();\n      for (const l of locs) if (l.path === p && l.snippet) l.snippet.code.split('\\n').forEach((t, i) => lines.set(l.snippet.startLine + i, t));\n      if (!lines.size) for (const l of locs) if (l.path === p) lines.set(l.lineNumber, l.lineContent || '');\n      let prev = null;\n      for (const no of [...lines.keys()].sort((a, b) => a - b)) {\n        if (prev !== null && no !== prev + 1) rows.push('<div class=\"gap\">⋯</div>');\n        emit(no, lines.get(no));\n        prev = no;\n      }\n    }\n    codeEl.innerHTML = rows.join('');\n  }\n"
+            "startLine": 403,
+            "code": "    if (FILES[p] != null) {\n      FILES[p].split('\\n').forEach((t, i) => emit(i + 1, t));\n    } else {\n      rows.push('<div class=\"code-note\">Only snippets are available for this file (it was missing or too large to embed).</div>');\n      const lines = new Map();\n      for (const l of locs) if (l.path === p && l.snippet) l.snippet.code.split('\\n').forEach((t, i) => lines.set(l.snippet.startLine + i, t));\n      if (!lines.size) for (const l of locs) if (l.path === p) lines.set(l.lineNumber, l.lineContent || '');\n      let prev = null;\n      for (const no of [...lines.keys()].sort((a, b) => a - b)) {\n        if (prev !== null && no !== prev + 1) rows.push('<div class=\"gap\">⋯</div>');\n        emit(no, lines.get(no));\n        prev = no;\n      }\n    }\n    codeEl.innerHTML = rows.join('');\n  }\n\n  function showInCode(l) {"
           },
-          "ctxHash": "c27accbb3bc9",
-          "narrativeHash": "c27accbb3bc9"
+          "narrativeHash": "cf1eae2d2c9f"
         },
         {
           "id": "4e",
@@ -682,16 +693,16 @@
           "description": "Resalta la línea seleccionada, inserta anotación y desplaza.",
           "explanation": "Lo llama `select` [6c] en cada selección, aunque la vista activa sea el diagrama, para que al volver al código todo esté en su sitio. Solo re-renderiza si cambia el archivo; si no, se limita a quitar la anotación previa y marcar la nueva fila. La anotación incluye el icono ◔ si la prosa del nodo tiene deriva. El scroll solo se aplica si la vista de código está visible, porque con el contenedor oculto `offsetTop` no es fiable; `setView` vuelve a llamarla al cambiar de vista [6f].",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 351,
+          "lineNumber": 420,
           "lineContent": "function showInCode(l) {",
           "symbol": "showInCode",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "8ad9f772085e",
           "snippet": {
-            "startLine": 348,
+            "startLine": 417,
             "code": "    codeEl.innerHTML = rows.join('');\n  }\n\n  function showInCode(l) {\n    if (state.file !== l.path) renderFile(l.path);\n    $$('.cl.hl', codeEl).forEach((e) => e.classList.remove('hl'));\n    $$('.anno, .anno-expl', codeEl).forEach((e) => e.remove());\n    const row = $('.cl[data-line=\"' + l.lineNumber + '\"]', codeEl);\n    if (!row) return;\n    row.classList.add('hl');\n    const i = locs.indexOf(byId.get(l.id));\n    const anno = document.createElement('div');\n    anno.className = 'anno';\n    anno.style.setProperty('--tc', l.trace.color);\n    anno.innerHTML =\n      '<span class=\"lid\">' + l.id + '</span><span class=\"ad\">' + inline(l.description) + '</span>' +\n      '<button class=\"xbtn\" data-anno-expl>' + (state.annoExpl ? 'Hide' : 'Explain') + '</button>' +\n      (staleNodes.has(l.id) ? '<span class=\"st drift\" title=\"Code changed after this node was explained\">◔</span>' : '') +"
           },
-          "ctxHash": "8ad9f772085e",
           "narrativeHash": "8ad9f772085e"
         },
         {
@@ -700,15 +711,15 @@
           "description": "Inserta id, descripción, Explain, open ↗ y enlaces prev/next sobre la línea.",
           "explanation": "La anotación se inserta como un `<div>` antes de la fila, de modo que aparece justo encima de la línea anclada. Los enlaces prev/next usan índices en `locs` [2c], recorriendo el mapa en orden de lectura aunque cruce archivos o trazas. Dentro de VS Code (`host`) se añade «open ↗» para revelar la línea en el editor. El botón «Explain» alterna `state.annoExpl`, que persiste entre selecciones: si lo abres, cada nueva ubicación aparece ya con su explicación.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 367,
+          "lineNumber": 436,
           "lineContent": "(i > 0 ? '<a data-go=\"' + (i - 1) + '\">← prev</a>' : '') + (i < locs.length - 1 ? '<a data-go=\"' + (i + 1) + '\">next →</a>' : '') + '</span>';",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "76fa7235e5f7",
           "snippet": {
-            "startLine": 364,
+            "startLine": 433,
             "code": "      '<button class=\"xbtn\" data-anno-expl>' + (state.annoExpl ? 'Hide' : 'Explain') + '</button>' +\n      (staleNodes.has(l.id) ? '<span class=\"st drift\" title=\"Code changed after this node was explained\">◔</span>' : '') +\n      '<span class=\"an\">' + (host ? '<a data-open-editor=\"' + l.id + '\" title=\"Reveal in the editor\">open ↗</a>' : '') +\n      (i > 0 ? '<a data-go=\"' + (i - 1) + '\">← prev</a>' : '') + (i < locs.length - 1 ? '<a data-go=\"' + (i + 1) + '\">next →</a>' : '') + '</span>';\n    row.parentNode.insertBefore(anno, row);\n    if (state.annoExpl) {\n      const ex = document.createElement('div');\n      ex.className = 'anno-expl md';\n      ex.style.setProperty('--tc', l.trace.color);\n      ex.innerHTML = explanationHtml(l);\n      row.parentNode.insertBefore(ex, row);\n    }\n    if (state.view === 'code') codeScroll.scrollTop = Math.max(0, anno.offsetTop - codeScroll.clientHeight / 3);\n  }\n  codeEl.addEventListener('click', (e) => {\n    const oe = e.target.closest('[data-open-editor]');\n    if (oe) return openInHost(oe.dataset.openEditor);\n    const g = e.target.closest('[data-go]');"
           },
-          "ctxHash": "76fa7235e5f7",
           "narrativeHash": "76fa7235e5f7"
         },
         {
@@ -717,15 +728,15 @@
           "description": "open ↗, prev/next, toggle de explicación y marcadores vuelven a select.",
           "explanation": "Igual que en el panel [3g], un listener delegado en `#code` resuelve todo. `data-open-editor` delega en `openInHost`, que envía un mensaje `open` a la extensión de VS Code; `data-go` navega por índice, `data-anno-expl` invierte `annoExpl` y repinta la anotación, y cualquier `data-ref` — marcadores del canalón o citas dentro de la explicación — llama a `select` [6a]. Nunca se manipulan las otras vistas desde aquí: esa responsabilidad es exclusiva de `select`.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 378,
+          "lineNumber": 447,
           "lineContent": "codeEl.addEventListener('click', (e) => {",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "26ac117d3e37",
           "snippet": {
-            "startLine": 375,
+            "startLine": 444,
             "code": "    }\n    if (state.view === 'code') codeScroll.scrollTop = Math.max(0, anno.offsetTop - codeScroll.clientHeight / 3);\n  }\n  codeEl.addEventListener('click', (e) => {\n    const oe = e.target.closest('[data-open-editor]');\n    if (oe) return openInHost(oe.dataset.openEditor);\n    const g = e.target.closest('[data-go]');\n    if (g) return select(locs[+g.dataset.go].id);\n    if (e.target.closest('[data-anno-expl]')) {\n      state.annoExpl = !state.annoExpl;\n      return showInCode(byId.get(state.sel));\n    }\n    const r = e.target.closest('[data-ref]');\n    if (r) select(r.dataset.ref);\n  });\n\n  // ---------------------------------------------------------------- diagram (custom SVG: tidy tree per trace + cross links)\n  const NODE_W = 200;"
           },
-          "ctxHash": "26ac117d3e37",
           "narrativeHash": "26ac117d3e37"
         }
       ],
@@ -778,7 +789,7 @@
           ]
         }
       ],
-      "narrativeHash": "87698bed127c"
+      "narrativeHash": "6bea3b862ea4"
     },
     {
       "id": "5",
@@ -786,7 +797,7 @@
       "description": "Layout de árbol por traza, clústeres en filas, enfoque de ruta y tarjeta de detalle.",
       "diagramTitle": "Interactive Diagram",
       "motivation": "El árbol del panel muestra la jerarquía pero no la forma global ni los flujos entre trazas. El diagrama dibuja cada traza como un árbol ordenado dentro de un clúster de color, con enlaces cruzados, y permite enfocar la ruta de un nodo. Se implementa a mano en SVG para no depender de Mermaid ni de red.",
-      "details": "`buildDiagram` [5a] calcula la geometría. Para cada traza, `mk` [5b] convierte el árbol anotado en nodos con `kind` (`loc`, `again` o `label`), profundidad y padre. Un layout de árbol ordenado en dos pasadas calcula anchos de subárbol [5c] y luego posiciones, centrando cada padre sobre sus hijos [5d]. Los clústeres se reparten en filas de hasta 1700 px [5e], y `primary` [5f] indexa la primera aparición de cada ubicación para resolver enlaces cruzados y selección.\n\n`renderDiagram` [5g] dibuja capas (clústeres, aristas, enlaces, nodos, etiquetas) y crea cada nodo como `foreignObject` con HTML [5h], lo que permite texto con ellipsis y estilos CSS. Al seleccionar, `focusDiagram` [5i] marca el nodo y atenúa todo lo que no esté en su ruta (ancestros, descendientes y vecinos por enlaces). El clic en un nodo [5j] llama a `select` con `from: 'diagram'`, y `renderCard` [5k] muestra la tarjeta con explicación, fragmento de código del archivo embebido, «Copy context» y enlaces al editor (vía VS Code si hay host) o al remoto.",
+      "details": "`buildDiagram` [5a] calcula la geometría. Para cada traza, `mk` [5b] convierte el árbol anotado en nodos con `kind` (`loc`, `again` o `label`), profundidad y padre. Un layout de árbol ordenado en dos pasadas calcula anchos de subárbol [5c] y luego posiciones, centrando cada padre sobre sus hijos [5d]. Los clústeres se reparten en filas [5e], y `primary` [5f] indexa la primera aparición de cada ubicación para resolver enlaces cruzados y selección.\n\n`renderDiagram` [5g] dibuja capas (clústeres, aristas, enlaces, nodos, etiquetas) y crea cada nodo como `foreignObject` con HTML [5h], lo que permite texto con ellipsis, estilos CSS e insignias de estado. Al seleccionar, `focusDiagram` [5i] marca el nodo y atenúa todo lo que no esté en su ruta (ancestros, descendientes y vecinos por enlaces). El clic en un nodo [5j] llama a `select` con `from: 'diagram'`, y `renderCard` [5k] muestra la tarjeta con explicación, los mismos extras que el panel (fact-check, ejecución, mapa detallado, notas), fragmento de código del archivo embebido, «Copy context» y enlaces al editor (vía VS Code si hay host) o al remoto.",
       "locations": [
         {
           "id": "5a",
@@ -794,16 +805,16 @@
           "description": "Calcula nodos, aristas, clústeres y enlaces con coordenadas.",
           "explanation": "Es pura geometría: no toca el DOM. Devuelve `{ clusters, nodes, links, primary, bounds }`, que `renderDiagram` [5g] traduce a SVG y que `focusDiagram` [5i] y `centerOn` reutilizan. Separar cálculo y dibujo hace que el layout sea fácil de ajustar con las constantes `NODE_W`, `ROW_H`, `HGAP`.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 410,
+          "lineNumber": 479,
           "lineContent": "function buildDiagram() {",
           "symbol": "buildDiagram",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "fd5a8268b6a2",
           "snippet": {
-            "startLine": 407,
+            "startLine": 476,
             "code": "  let dg = null;\n  const view = { x: 0, y: 0, k: 1 };\n\n  function buildDiagram() {\n    const clusters = [];\n    const nodes = [];\n    for (const t of traces) {\n      const cn = [];\n      const ce = [];\n      const seenLocal = new Set();\n      let k = 0;\n      const mk = (n, depth, parent) => {\n        const l = n.ref ? byId.get(n.ref) : null;\n        const kind = l ? (seenLocal.has(l.id) ? 'again' : 'loc') : 'label';\n        if (l) seenLocal.add(l.id);\n        const node = { key: t.id + ':' + k++, kind, loc: l, label: n.label || (l ? l.title : '…'), via: n.via, depth, parent, children: [], trace: t };\n        node.h = kind === 'label' ? LBL_H : LOC_H;\n        cn.push(node);"
           },
-          "ctxHash": "fd5a8268b6a2",
           "narrativeHash": "fd5a8268b6a2"
         },
         {
@@ -812,15 +823,15 @@
           "description": "Convierte cada nodo del árbol en nodo con kind y padre.",
           "explanation": "Recorre el árbol de la traza en profundidad. Igual que el panel [3c], distingue la primera aparición (`loc`) de repeticiones (`again`, pintadas con `↺`) y pasos solo-etiqueta (`label`, más bajos). Cada nodo guarda una clave única `traza:contador`, usada en `data-key` para atenuar y en las aristas `data-a`/`data-b`.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 418,
+          "lineNumber": 487,
           "lineContent": "const mk = (n, depth, parent) => {",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "374f1928d55d",
           "snippet": {
-            "startLine": 415,
+            "startLine": 484,
             "code": "      const ce = [];\n      const seenLocal = new Set();\n      let k = 0;\n      const mk = (n, depth, parent) => {\n        const l = n.ref ? byId.get(n.ref) : null;\n        const kind = l ? (seenLocal.has(l.id) ? 'again' : 'loc') : 'label';\n        if (l) seenLocal.add(l.id);\n        const node = { key: t.id + ':' + k++, kind, loc: l, label: n.label || (l ? l.title : '…'), via: n.via, depth, parent, children: [], trace: t };\n        node.h = kind === 'label' ? LBL_H : LOC_H;\n        cn.push(node);\n        node.children = (n.children || []).map((c) => mk(c, depth + 1, node));\n        for (const c of node.children) ce.push({ from: node, to: c, label: c.via });\n        return node;\n      };\n      const roots = (t.tree || []).map((n) => mk(n, 0, null));\n      // Tidy tree, except that 3+ leaf children are stacked in a column under their parent\n      // (with an elbow spine) instead of being spread horizontally: keeps clusters compact.\n      const stackable = (n) => n.children.length >= 3 && n.children.every((c) => !c.children.length);"
           },
-          "ctxHash": "374f1928d55d",
           "narrativeHash": "374f1928d55d"
         },
         {
@@ -829,15 +840,15 @@
           "description": "Primera pasada: ancho de cada subárbol; apila 3+ hojas en columna.",
           "explanation": "Una hoja ocupa `NODE_W`; un padre ocupa la suma de sus hijos más los huecos, o `NODE_W` si es más ancho. La excepción es `stackable`: si un nodo tiene tres o más hijos y todos son hojas, no se reparten en horizontal sino que se apilan en columna bajo el padre (`n.stack`), y el subárbol mide solo `NODE_W + STACK_IN`. Sin esa regla, un padre con ocho hojas producía un cluster de casi 2000 px y el diagrama quedaba ilegible al encajarlo. Este cálculo de abajo arriba es la base del «tidy tree»: hace falta saber cuánto mide cada subárbol antes de colocarlo en [5d].",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 433,
+          "lineNumber": 502,
           "lineContent": "const width = (n) => {",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "c175eaab4c5a",
           "snippet": {
-            "startLine": 430,
+            "startLine": 499,
             "code": "      // Tidy tree, except that 3+ leaf children are stacked in a column under their parent\n      // (with an elbow spine) instead of being spread horizontally: keeps clusters compact.\n      const stackable = (n) => n.children.length >= 3 && n.children.every((c) => !c.children.length);\n      const width = (n) => {\n        if (!n.children.length) return (n.w = NODE_W);\n        if (stackable(n)) {\n          n.stack = true;\n          for (const c of n.children) { c.stacked = true; if (c.via) c.h += 14; width(c); }\n          return (n.w = NODE_W + STACK_IN);\n        }\n        const cw = n.children.reduce((s, c) => s + width(c), 0) + HGAP * (n.children.length - 1);\n        return (n.w = Math.max(NODE_W, cw));\n      };\n      const place = (n, left, top) => {\n        n.y = top + (n.stacked ? 0 : (LOC_H - n.h) / 2);\n        if (!n.children.length) { n.x = left + (n.w - NODE_W) / 2; return; }\n        if (n.stack) {\n          n.x = left;"
           },
-          "ctxHash": "c175eaab4c5a",
           "narrativeHash": "c175eaab4c5a"
         },
         {
@@ -846,15 +857,15 @@
           "description": "Segunda pasada: coloca hijos en fila o en columna y centra al padre.",
           "explanation": "Recibe la esquina superior (`left`, `top`) del espacio que [5c] reservó. En el caso normal los hijos se colocan de izquierda a derecha una fila más abajo (`top + ROW_H`) y el padre se centra entre el primero y el último hijo. Si el nodo está marcado como `stack`, los hijos van uno debajo de otro con una sangría de `STACK_IN`, y `renderDiagram` los une al padre con un codo que baja por la izquierda; la etiqueta `via` se pinta dentro de la tarjeta porque no hay hueco para ponerla sobre la arista. Como `y` ya no depende de la profundidad sino de dónde termina cada columna, un árbol con hojas apiladas crece hacia abajo en lugar de a lo ancho. El orden de los hijos en el JSON sigue siendo el orden visual, por eso el árbol debe ir en orden de ejecución.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 443,
+          "lineNumber": 512,
           "lineContent": "const place = (n, left, top) => {",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "6723f3fa9e1c",
           "snippet": {
-            "startLine": 440,
+            "startLine": 509,
             "code": "        const cw = n.children.reduce((s, c) => s + width(c), 0) + HGAP * (n.children.length - 1);\n        return (n.w = Math.max(NODE_W, cw));\n      };\n      const place = (n, left, top) => {\n        n.y = top + (n.stacked ? 0 : (LOC_H - n.h) / 2);\n        if (!n.children.length) { n.x = left + (n.w - NODE_W) / 2; return; }\n        if (n.stack) {\n          n.x = left;\n          let cy = top + LOC_H + 22;\n          for (const c of n.children) { place(c, left + STACK_IN, cy); cy += c.h + 12; }\n          return;\n        }\n        const cw = n.children.reduce((s, c) => s + c.w, 0) + HGAP * (n.children.length - 1);\n        let cx = left + (n.w - cw) / 2;\n        for (const c of n.children) { place(c, cx, top + ROW_H); cx += c.w + HGAP; }\n        n.x = (n.children[0].x + n.children[n.children.length - 1].x) / 2;\n      };\n      let x = 0;"
           },
-          "ctxHash": "6723f3fa9e1c",
           "narrativeHash": "6723f3fa9e1c"
         },
         {
@@ -863,15 +874,15 @@
           "description": "Reparte clústeres en filas y calcula coordenadas absolutas.",
           "explanation": "Funciona como el ajuste de línea de un texto: cada clúster se añade a la fila actual hasta que no cabe, y entonces salta a la siguiente. El ancho máximo es 1700 px o el del clúster más ancho. Después se calculan `ax`/`ay` absolutos de cada nodo, que usan aristas, enlaces, `foreignObject` y `centerOn`.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 476,
+          "lineNumber": 545,
           "lineContent": "if (cx > 0 && cx + c.w > maxRow) { cx = 0; cy += rowH + CGAP; rowH = 0; }",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "9febb4922db4",
           "snippet": {
-            "startLine": 473,
+            "startLine": 542,
             "code": "      let rowH = 0;\n      let w = 0;\n      for (const c of clusters) {\n        if (cx > 0 && cx + c.w > maxRow) { cx = 0; cy += rowH + CGAP; rowH = 0; }\n        if (apply) { c.x = cx; c.y = cy; }\n        cx += c.w + CGAP;\n        w = Math.max(w, cx - CGAP);\n        rowH = Math.max(rowH, c.h);\n      }\n      return { w, h: cy + rowH };\n    };\n    const vr = svg.getBoundingClientRect();\n    const vw = vr.width || 1200;\n    const vh = vr.height || 800;\n    const widest = Math.max(...clusters.map((c) => c.w));\n    const total = clusters.reduce((s, c) => s + c.w + CGAP, 0);\n    let best = widest;\n    let bestK = 0;"
           },
-          "ctxHash": "9febb4922db4",
           "narrativeHash": "9febb4922db4"
         },
         {
@@ -880,15 +891,15 @@
           "description": "Mapea id de ubicación a su nodo canónico en el diagrama.",
           "explanation": "Es el equivalente en el diagrama de `byId` [2c]: dado un id, devuelve el nodo donde enfocar o centrar. Los enlaces cruzados de `doc.links` se resuelven contra él y se descartan si algún extremo no existe. `select` [6d] y el botón ◎ lo usan para localizar el nodo seleccionado.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 499,
+          "lineNumber": 568,
           "lineContent": "const primary = new Map(nodes.filter((n) => n.kind === 'loc').map((n) => [n.loc.id, n]));",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "99fb5517579d",
           "snippet": {
-            "startLine": 496,
+            "startLine": 565,
             "code": "    }\n    flow(best, true);\n    for (const c of clusters) for (const n of c.nodes) { n.ax = c.x + c.offX + n.x; n.ay = c.y + c.offY + n.y; }\n    const primary = new Map(nodes.filter((n) => n.kind === 'loc').map((n) => [n.loc.id, n]));\n    const links = (doc.links || []).map((l) => ({ ...l, a: primary.get(l.from), b: primary.get(l.to) })).filter((l) => l.a && l.b);\n    const bounds = { w: Math.max(...clusters.map((c) => c.x + c.w)), h: Math.max(...clusters.map((c) => c.y + c.h)) };\n    return { clusters, nodes, links, primary, bounds, aspect: vw / vh };\n  }\n\n  function el(tag, attrs, parent) {\n    const e = document.createElementNS(SVGNS, tag);\n    for (const k in attrs) e.setAttribute(k, attrs[k]);\n    if (parent) parent.appendChild(e);\n    return e;\n  }\n\n  function renderDiagram() {\n    dg = buildDiagram();"
           },
-          "ctxHash": "99fb5517579d",
           "narrativeHash": "99fb5517579d"
         },
         {
@@ -897,16 +908,16 @@
           "description": "Dibuja capas SVG: clústeres, aristas, enlaces, nodos, etiquetas.",
           "explanation": "Crea cinco grupos en orden de pintado para controlar el z-index: cajas de clúster al fondo, luego aristas Bézier, enlaces entre trazas, nodos y por último etiquetas encima de todo. Cada elemento lleva `data-t` con su traza para que la leyenda pueda ocultar trazas, y `data-a`/`data-b` para que el enfoque atenúe aristas. Al terminar aplica ocultos y ajusta el zoom con `fit()`.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 512,
+          "lineNumber": 581,
           "lineContent": "function renderDiagram() {",
           "symbol": "renderDiagram",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "81c917ff9dd2",
           "snippet": {
-            "startLine": 509,
+            "startLine": 578,
             "code": "    return e;\n  }\n\n  function renderDiagram() {\n    dg = buildDiagram();\n    vp.innerHTML = '';\n    const gClusters = el('g', {}, vp);\n    const gEdges = el('g', {}, vp);\n    const gLinks = el('g', {}, vp);\n    const gNodes = el('g', {}, vp);\n    const gLabels = el('g', {}, vp);\n\n    for (const c of dg.clusters) {\n      const g = el('g', { class: 'cluster', 'data-t': c.trace.id, style: '--tc:' + c.trace.color }, gClusters);\n      el('rect', { class: 'box', x: c.x, y: c.y, width: c.w, height: c.h, rx: 14 }, g);\n      const head = el('g', { class: 'chead', 'data-fit': c.trace.id }, g);\n      el('rect', { x: c.x, y: c.y, width: c.w, height: HEAD - 6, rx: 14 }, head);\n      const tx = el('text', { x: c.x + 16, y: c.y + 22 }, head);"
           },
-          "ctxHash": "81c917ff9dd2",
           "narrativeHash": "81c917ff9dd2"
         },
         {
@@ -915,15 +926,15 @@
           "description": "Cada nodo es HTML dentro de un foreignObject del SVG.",
           "explanation": "El texto en SVG puro no hace saltos de línea ni ellipsis; meter un `<div>` en un `foreignObject` permite reutilizar CSS normal. Los nodos de ubicación llevan `data-id`, que es lo que buscan los handlers de clic, hover y doble clic [5j]. Muestran id, título y `archivo:línea`.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 575,
+          "lineNumber": 644,
           "lineContent": "const fo = el('foreignObject', { x: n.ax, y: n.ay, width: NODE_W, height: n.h }, g);",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
-          "snippet": {
-            "startLine": 572,
-            "code": "    }\n    for (const n of dg.nodes) {\n      const g = el('g', { class: 'node', 'data-t': n.trace.id, 'data-key': n.key }, gNodes);\n      const fo = el('foreignObject', { x: n.ax, y: n.ay, width: NODE_W, height: n.h }, g);\n      const div = document.createElement('div');\n      div.style.setProperty('--tc', n.trace.color);\n      if (n.kind === 'label') {\n        div.className = 'dn label';\n        div.innerHTML = '<div class=\"t\">' + esc(n.label) + '</div>';\n      } else {\n        div.className = 'dn ' + n.kind + (staleNodes.has(n.loc.id) ? ' drift' : '');\n        div.dataset.id = n.loc.id;\n        div.innerHTML =\n          (n.stacked && n.via ? '<div class=\"v\">↳ ' + esc(n.via) + '</div>' : '') +\n          '<div class=\"h\"><span class=\"i\">' + (n.kind === 'again' ? '↺ ' : '') + n.loc.id + '</span><span class=\"t\">' + esc(n.label) + '</span>' +\n          (staleNodes.has(n.loc.id) ? '<span class=\"dr\" title=\"Code changed after this node was explained\">◔</span>' : '') + '</div>' +\n          '<div class=\"f\">' + esc(base(n.loc.path)) + ':' + n.loc.lineNumber + '</div>';\n      }"
-          },
+          "fileHash": "ac1ff9154972",
           "ctxHash": "55b5debcb3fb",
+          "snippet": {
+            "startLine": 641,
+            "code": "    }\n    for (const n of dg.nodes) {\n      const g = el('g', { class: 'node', 'data-t': n.trace.id, 'data-key': n.key }, gNodes);\n      const fo = el('foreignObject', { x: n.ax, y: n.ay, width: NODE_W, height: n.h }, g);\n      const div = document.createElement('div');\n      div.style.setProperty('--tc', n.trace.color);\n      if (n.kind === 'label') {\n        div.className = 'dn label';\n        div.innerHTML = '<div class=\"t\">' + esc(n.label) + '</div>';\n      } else {\n        div.className = 'dn ' + n.kind + (staleNodes.has(n.loc.id) ? ' drift' : '');\n        div.dataset.id = n.loc.id;\n        div.innerHTML =\n          (n.stacked && n.via ? '<div class=\"v\">↳ ' + esc(n.via) + '</div>' : '') +\n          '<div class=\"h\"><span class=\"i\">' + (n.kind === 'again' ? '↺ ' : '') + n.loc.id + '</span><span class=\"t\">' + esc(n.label) + '</span>' +\n          (staleNodes.has(n.loc.id) ? '<span class=\"dr\" title=\"Code changed after this node was explained\">◔</span>' : '') + badges(n.loc) + '</div>' +\n          '<div class=\"f\">' + esc(base(n.loc.path)) + ':' + n.loc.lineNumber + '</div>';\n      }"
+          },
           "narrativeHash": "55b5debcb3fb"
         },
         {
@@ -932,16 +943,16 @@
           "description": "Marca el nodo y atenúa lo que no está en su ruta.",
           "explanation": "Usa `relatedKeys` para reunir ancestros, descendientes y vecinos por enlaces cruzados, y añade `dim` a nodos y aristas fuera de ese conjunto. Marca con `sel` todas las apariciones del id (incluidas las `again`). Devuelve el nodo primario para que `select` [6d] pueda centrarlo; si el id no tiene nodo, simplemente limpia la selección.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 796,
+          "lineNumber": 873,
           "lineContent": "function focusDiagram(id) {",
           "symbol": "focusDiagram",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "9e62f7961863",
           "snippet": {
-            "startLine": 793,
+            "startLine": 870,
             "code": "    }\n    return keys;\n  }\n  function focusDiagram(id) {\n    if (!dg) return;\n    const n = dg.primary.get(id);\n    $$('.dn.sel', svg).forEach((e) => e.classList.remove('sel'));\n    if (!n) return;\n    $$('.dn[data-id=\"' + id + '\"]', svg).forEach((e) => e.classList.add('sel'));\n    const keys = relatedKeys(n);\n    svg.classList.add('focus');\n    $$('.node', svg).forEach((g) => g.classList.toggle('dim', !keys.has(g.dataset.key)));\n    $$('[data-a]', svg).forEach((p) => p.classList.toggle('dim', !(keys.has(p.dataset.a) && keys.has(p.dataset.b))));\n    return n;\n  }\n  function clearFocus() {\n    svg.classList.remove('focus');\n    $$('.dim', svg).forEach((e) => e.classList.remove('dim'));"
           },
-          "ctxHash": "9e62f7961863",
           "narrativeHash": "9e62f7961863"
         },
         {
@@ -950,34 +961,34 @@
           "description": "Clic selecciona sin recentrar; clic en cabecera ajusta el clúster.",
           "explanation": "El `from: 'diagram'` le dice a `select` [6e] que no recentre la vista: el usuario acaba de hacer clic ahí y moverla sería desorientador. Hacer clic en la cabecera de un clúster lo encuadra con `fitBox`, y un doble clic selecciona y salta a la vista de código. El arrastre sin movimiento sobre el fondo limpia el enfoque.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 773,
+          "lineNumber": 842,
           "lineContent": "if (d) return select(d.dataset.id, { from: 'diagram' });",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
-          "snippet": {
-            "startLine": 770,
-            "code": "  });\n  svg.addEventListener('click', (e) => {\n    const d = e.target.closest('.dn[data-id]');\n    if (d) return select(d.dataset.id, { from: 'diagram' });\n    const h = e.target.closest('[data-fit]');\n    if (h) {\n      const c = dg.clusters.find((x) => x.trace.id === h.dataset.fit);\n      fitBox(c.x, c.y, c.w, c.h, 1.2);\n    }\n  });\n  svg.addEventListener('dblclick', (e) => {\n    const d = e.target.closest('.dn[data-id]');\n    if (d) { select(d.dataset.id); setView('code'); }\n  });\n\n  function relatedKeys(n) {\n    const keys = new Set([n.key]);\n    for (let p = n.parent; p; p = p.parent) keys.add(p.key);"
-          },
+          "fileHash": "ac1ff9154972",
           "ctxHash": "ee5173ec0f20",
+          "snippet": {
+            "startLine": 839,
+            "code": "  });\n  svg.addEventListener('click', (e) => {\n    const d = e.target.closest('.dn[data-id]');\n    if (d) return select(d.dataset.id, { from: 'diagram' });\n    const h = e.target.closest('[data-fit]');\n    if (h) {\n      const c = dg.clusters.find((x) => x.trace.id === h.dataset.fit);\n      fitBox(c.x, c.y, c.w, c.h, 1.2);\n    }\n  });\n  svg.addEventListener('dblclick', (e) => {\n    const d = e.target.closest('.dn[data-id]');\n    if (!d) return;\n    const l = byId.get(d.dataset.id);\n    if (l && l.mapRef) {\n      if (host) host.postMessage({ type: 'openMap', ref: l.mapRef });\n      else location.href = mapHref(l.mapRef);\n      return;"
+          },
           "narrativeHash": "ee5173ec0f20"
         },
         {
           "id": "5k",
           "title": "renderCard",
-          "description": "Tarjeta con explicación, fragmento embebido y enlaces externos.",
-          "explanation": "Toma unas diez líneas alrededor del anclaje de `FILES` [1b] (o del `snippet` si el archivo no está embebido) y las resalta. Los botones de acción dependen del entorno: dentro de VS Code «Open in editor» envía un mensaje al host, fuera construye una URL de editor con `prefs.root` [2e]; «Copy context» copia el `nodeMd` del nodo [1f] y «View on remote» usa `meta.remote` + `meta.commit`. «Open in code view» cambia de vista; la selección ya está hecha, así que el código aparece en el sitio correcto.",
+          "description": "Tarjeta con explicación, extras, fragmento embebido y enlaces externos.",
+          "explanation": "Toma unas diez líneas alrededor del anclaje de `FILES` [1b] (o del `snippet` si el archivo no está embebido) y las resalta. Bajo la explicación añade `extrasHtml`, los mismos extras que la tarjeta del panel [3b]: incidencias del fact-check, línea de ejecución, enlace al mapa detallado y notas con «+ Note». Los botones de acción dependen del entorno: dentro de VS Code «Open in editor» envía un mensaje al host, fuera construye una URL de editor con `prefs.root` [2e]; «Copy context» copia el `nodeMd` del nodo [1f] y «View on remote» usa `meta.remote` + `meta.commit`. El listener de `dgCard` enruta cerrar, copiar, notas, `openMap`, abrir en editor y «Open in code view», que solo cambia de vista porque la selección ya está hecha.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 814,
+          "lineNumber": 891,
           "lineContent": "function renderCard(l) {",
           "symbol": "renderCard",
           "status": "ok",
-          "fileHash": "9845fbe7136b",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "45b40bdd504a",
           "snippet": {
-            "startLine": 811,
+            "startLine": 888,
             "code": "    $$('.dn.sel', svg).forEach((e) => e.classList.remove('sel'));\n    dgCard.hidden = true;\n  }\n  function renderCard(l) {\n    const lines = FILES[l.path] != null ? FILES[l.path].split('\\n') : null;\n    let snippet = '';\n    const from = Math.max(1, l.lineNumber - 3);\n    const ext = extOf(l.path);\n    if (lines) {\n      const to = Math.min(lines.length, l.lineNumber + 6);\n      for (let i = from; i <= to; i++) snippet += '<span class=\"r' + (i === l.lineNumber ? ' hl' : '') + '\"><span class=\"n\">' + i + '</span>' + hl(lines[i - 1], ext) + '</span>';\n    } else if (l.snippet) {\n      l.snippet.code.split('\\n').slice(0, 10).forEach((t, i) => {\n        const no = l.snippet.startLine + i;\n        snippet += '<span class=\"r' + (no === l.lineNumber ? ' hl' : '') + '\"><span class=\"n\">' + no + '</span>' + hl(t, ext) + '</span>';\n      });\n    }\n    const ed = editorUrl(l);"
           },
-          "ctxHash": "26d431d2c22e",
-          "narrativeHash": "26d431d2c22e"
+          "narrativeHash": "45b40bdd504a"
         }
       ],
       "tree": [
@@ -1035,7 +1046,7 @@
           ]
         }
       ],
-      "narrativeHash": "e08e82eeff96"
+      "narrativeHash": "27c4774f2592"
     },
     {
       "id": "6",
@@ -1051,18 +1062,17 @@
           "description": "Punto único que propaga la selección a todas las vistas.",
           "explanation": "Todos los caminos convergen aquí: tarjetas y citas del panel [3g], marcadores y prev/next del código [4g], nodos del diagrama [5j], teclado y buscador [6g], el arranque [2g] y los mensajes de la extensión de VS Code. `opts.from` indica el origen para evitar movimientos bruscos en la vista desde la que se hizo clic y para no hacer eco: si hay `host`, notifica la selección a la extensión salvo que venga del propio host o del arranque. Es idempotente: llamarla dos veces con el mismo id deja el mismo estado, lo que simplifica mucho los handlers.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 951,
+          "lineNumber": 1032,
           "lineContent": "function select(id, opts = {}) {",
           "symbol": "select",
-          "status": "moved",
-          "fileHash": "9845fbe7136b",
+          "status": "ok",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "bfe356e2774e",
           "snippet": {
-            "startLine": 948,
+            "startLine": 1029,
             "code": "  }\n\n  // ---------------------------------------------------------------- selection & views\n  function select(id, opts = {}) {\n    const l = byId.get(id);\n    if (!l) return;\n    state.sel = id;\n    if (host && opts.from !== 'host' && opts.from !== 'boot') host.postMessage({ type: 'select', id, path: l.path, line: l.lineNumber });\n    $$('.loc.sel', mapPane).forEach((e) => e.classList.remove('sel'));\n    const card = $('.loc[data-id=\"' + id + '\"]:not(.ref-again)', mapPane);\n    if (card) {\n      card.classList.add('sel');\n      card.closest('.trace').classList.remove('closed');\n      if (opts.from !== 'map') card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });\n    }\n    showInCode(l);\n    if (dg) {\n      const n = focusDiagram(id);"
           },
-          "ctxHash": "bfe356e2774e",
-          "narrativeHash": "bfe356e2774e",
-          "note": "line 945 -> 951"
+          "narrativeHash": "bfe356e2774e"
         },
         {
           "id": "6b",
@@ -1070,17 +1080,16 @@
           "description": "Marca la tarjeta canónica, despliega la traza y hace scroll.",
           "explanation": "El selector excluye las repeticiones [3c] para tocar siempre la tarjeta canónica. Si la traza estaba plegada se despliega quitando `closed`. El scroll `nearest` + `smooth` solo se omite cuando el clic viene del propio panel, para no hacer saltar lo que el usuario está mirando.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 957,
+          "lineNumber": 1038,
           "lineContent": "const card = $('.loc[data-id=\"' + id + '\"]:not(.ref-again)', mapPane);",
-          "status": "moved",
-          "fileHash": "9845fbe7136b",
+          "status": "ok",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "65a6d1873271",
           "snippet": {
-            "startLine": 954,
+            "startLine": 1035,
             "code": "    state.sel = id;\n    if (host && opts.from !== 'host' && opts.from !== 'boot') host.postMessage({ type: 'select', id, path: l.path, line: l.lineNumber });\n    $$('.loc.sel', mapPane).forEach((e) => e.classList.remove('sel'));\n    const card = $('.loc[data-id=\"' + id + '\"]:not(.ref-again)', mapPane);\n    if (card) {\n      card.classList.add('sel');\n      card.closest('.trace').classList.remove('closed');\n      if (opts.from !== 'map') card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });\n    }\n    showInCode(l);\n    if (dg) {\n      const n = focusDiagram(id);\n      if (state.view === 'diagram') {\n        renderCard(l);\n        if (n && opts.from !== 'diagram') centerOn(n);\n      }\n    }\n    history.replaceState(null, '', '#' + id);"
           },
-          "ctxHash": "65a6d1873271",
-          "narrativeHash": "65a6d1873271",
-          "note": "line 951 -> 957"
+          "narrativeHash": "65a6d1873271"
         },
         {
           "id": "6c",
@@ -1088,17 +1097,16 @@
           "description": "Actualiza la vista de código aunque esté oculta.",
           "explanation": "Delegar en `showInCode` [4e] mantiene el código siempre al día: archivo correcto, línea resaltada y anotación insertada. Como el scroll solo se aplica con la vista visible, hacerlo en segundo plano es barato y evita parpadeos al volver con `setView` [6f].",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 963,
+          "lineNumber": 1044,
           "lineContent": "showInCode(l);",
-          "status": "moved",
-          "fileHash": "9845fbe7136b",
+          "status": "ok",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "3ce7a4886bcb",
           "snippet": {
-            "startLine": 960,
+            "startLine": 1041,
             "code": "      card.closest('.trace').classList.remove('closed');\n      if (opts.from !== 'map') card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });\n    }\n    showInCode(l);\n    if (dg) {\n      const n = focusDiagram(id);\n      if (state.view === 'diagram') {\n        renderCard(l);\n        if (n && opts.from !== 'diagram') centerOn(n);\n      }\n    }\n    history.replaceState(null, '', '#' + id);\n  }\n\n  function setView(v) {\n    state.view = v;\n    prefs.view = v;\n    savePrefs();"
           },
-          "ctxHash": "3ce7a4886bcb",
-          "narrativeHash": "3ce7a4886bcb",
-          "note": "line 957 -> 963"
+          "narrativeHash": "3ce7a4886bcb"
         },
         {
           "id": "6d",
@@ -1106,17 +1114,16 @@
           "description": "Si el diagrama existe, marca el nodo y atenúa el resto.",
           "explanation": "La guarda `if (dg)` existe porque el diagrama se construye perezosamente [6f]: mientras el usuario no lo abra, no hay nada que enfocar. Una vez construido, el enfoque se aplica incluso con la vista oculta, así que al cambiar de vista el nodo ya aparece resaltado. `focusDiagram` [5i] devuelve el nodo para centrarlo.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 965,
+          "lineNumber": 1046,
           "lineContent": "const n = focusDiagram(id);",
-          "status": "moved",
-          "fileHash": "9845fbe7136b",
+          "status": "ok",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "87cf3cf76c71",
           "snippet": {
-            "startLine": 962,
+            "startLine": 1043,
             "code": "    }\n    showInCode(l);\n    if (dg) {\n      const n = focusDiagram(id);\n      if (state.view === 'diagram') {\n        renderCard(l);\n        if (n && opts.from !== 'diagram') centerOn(n);\n      }\n    }\n    history.replaceState(null, '', '#' + id);\n  }\n\n  function setView(v) {\n    state.view = v;\n    prefs.view = v;\n    savePrefs();\n    $('#vCode').classList.toggle('on', v === 'code');\n    $('#vDiagram').classList.toggle('on', v === 'diagram');"
           },
-          "ctxHash": "87cf3cf76c71",
-          "narrativeHash": "87cf3cf76c71",
-          "note": "line 959 -> 965"
+          "narrativeHash": "87cf3cf76c71"
         },
         {
           "id": "6e",
@@ -1124,17 +1131,16 @@
           "description": "Con el diagrama visible, pinta tarjeta y centra el nodo.",
           "explanation": "La tarjeta de detalle [5k] solo se pinta si el diagrama está visible, para no hacer trabajo inútil. El centrado anima el viewport con `animateTo` (curva cúbica de 260 ms), pero se omite cuando el clic vino del diagrama [5j]: el nodo ya está bajo el cursor. Si se seleccionó desde el panel o el teclado, el diagrama «viaja» hasta el nodo.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 968,
+          "lineNumber": 1049,
           "lineContent": "if (n && opts.from !== 'diagram') centerOn(n);",
-          "status": "moved",
-          "fileHash": "9845fbe7136b",
+          "status": "ok",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "9afae9f8c210",
           "snippet": {
-            "startLine": 965,
+            "startLine": 1046,
             "code": "      const n = focusDiagram(id);\n      if (state.view === 'diagram') {\n        renderCard(l);\n        if (n && opts.from !== 'diagram') centerOn(n);\n      }\n    }\n    history.replaceState(null, '', '#' + id);\n  }\n\n  function setView(v) {\n    state.view = v;\n    prefs.view = v;\n    savePrefs();\n    $('#vCode').classList.toggle('on', v === 'code');\n    $('#vDiagram').classList.toggle('on', v === 'diagram');\n    $('#codeView').hidden = v !== 'code';\n    $('#diagramView').hidden = v !== 'diagram';\n    if (v === 'diagram') {"
           },
-          "ctxHash": "9afae9f8c210",
-          "narrativeHash": "9afae9f8c210",
-          "note": "line 962 -> 968"
+          "narrativeHash": "9afae9f8c210"
         },
         {
           "id": "6f",
@@ -1142,17 +1148,16 @@
           "description": "Alterna vistas, persiste y construye el diagrama la primera vez.",
           "explanation": "Construir el SVG requiere que el contenedor sea visible para medir con `getBoundingClientRect` y ajustar el zoom, así que se hace la primera vez que se muestra la vista. Después, `setView` re-aplica la selección: en el diagrama enfoca, pinta la tarjeta y centra; en el código llama a `showInCode` para recuperar el scroll correcto. La vista elegida se guarda en `prefs` [2e] y se restaura al reabrir.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 983,
+          "lineNumber": 1064,
           "lineContent": "if (!dg) renderDiagram();",
-          "status": "moved",
-          "fileHash": "9845fbe7136b",
+          "status": "ok",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "c900c77b9a16",
           "snippet": {
-            "startLine": 980,
+            "startLine": 1061,
             "code": "    $('#codeView').hidden = v !== 'code';\n    $('#diagramView').hidden = v !== 'diagram';\n    if (v === 'diagram') {\n      if (!dg) renderDiagram();\n      if (state.sel) {\n        const n = focusDiagram(state.sel);\n        renderCard(byId.get(state.sel));\n        if (n) centerOn(n);\n      }\n    } else if (state.sel) {\n      showInCode(byId.get(state.sel));\n    }\n  }\n  $('#vCode').onclick = () => setView('code');\n  $('#vDiagram').onclick = () => setView('diagram');\n\n  document.addEventListener('keydown', (e) => {\n    if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;"
           },
-          "ctxHash": "c900c77b9a16",
-          "narrativeHash": "c900c77b9a16",
-          "note": "line 977 -> 983"
+          "narrativeHash": "c900c77b9a16"
         },
         {
           "id": "6g",
@@ -1160,17 +1165,16 @@
           "description": "Flechas/j/k navegan, e explica, d cambia vista, / busca, Esc limpia.",
           "explanation": "Se ignoran pulsaciones dentro de inputs (ajustes y buscador) y con modificadores, para no robar atajos del navegador. La navegación usa el orden global de `locs` [2c], igual que prev/next [4f], y pasa por `select` [6a], así que las tres vistas se mueven juntas. `e` reutiliza `toggleExplain` [3f], `d` llama a `setView` [6f], `f` ajusta el diagrama y `/` enfoca el buscador de nodos.",
           "path": "src/render/viewer.client.js",
-          "lineNumber": 996,
+          "lineNumber": 1077,
           "lineContent": "document.addEventListener('keydown', (e) => {",
-          "status": "moved",
-          "fileHash": "9845fbe7136b",
+          "status": "ok",
+          "fileHash": "ac1ff9154972",
+          "ctxHash": "75b6bd533598",
           "snippet": {
-            "startLine": 993,
+            "startLine": 1074,
             "code": "  $('#vCode').onclick = () => setView('code');\n  $('#vDiagram').onclick = () => setView('diagram');\n\n  document.addEventListener('keydown', (e) => {\n    if (/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;\n    const i = locs.findIndex((x) => x.id === state.sel);\n    if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); if (locs[i + 1]) select(locs[i + 1].id); }\n    else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); if (i > 0) select(locs[i - 1].id); }\n    else if (e.key === 'e' && state.sel) toggleExplain(state.sel);\n    else if (e.key === 'd') setView(state.view === 'code' ? 'diagram' : 'code');\n    else if (e.key === 'f' && state.view === 'diagram') fit(true);\n    else if (e.key === 'Escape') clearFocus();\n    else if (e.key === '/') { e.preventDefault(); searchEl.focus(); searchEl.select(); }\n  });\n\n  // ---------------------------------------------------------------- splitter, settings, copy\n  const splitter = $('#splitter');\n  if (prefs.mapW) document.documentElement.style.setProperty('--map-w', prefs.mapW);"
           },
-          "ctxHash": "75b6bd533598",
-          "narrativeHash": "75b6bd533598",
-          "note": "line 990 -> 996"
+          "narrativeHash": "75b6bd533598"
         }
       ],
       "tree": [
@@ -1287,22 +1291,22 @@
     "render",
     "ui"
   ],
+  "narrativeHash": "bb1e518bcde8",
   "meta": {
     "createdAt": "2026-10-20T01:48:09.343Z",
-    "updatedAt": "2026-10-20T02:31:56.471Z",
+    "updatedAt": "2026-10-20T03:48:17.107Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "8a8e4b9492eb63a7729118d1add1655683b5ff37",
+    "commit": "9fce4e38f8797d3e72d7948c3f5e3646a2783d12",
     "branch": "main",
     "remote": "https://github.com/h0w4r/waymark",
     "anchors": {
-      "ok": 41,
-      "moved": 8,
+      "ok": 49,
+      "moved": 0,
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-20T02:22:07.021Z"
-  },
-  "narrativeHash": "efddc4ddc59b"
+    "verifiedAt": "2026-10-20T04:01:38.885Z"
+  }
 }

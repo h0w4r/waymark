@@ -1,31 +1,47 @@
 name: release
-# Push a tag like v0.3.0 (after `npm run version:set -- 0.3.0`) to publish a GitHub Release
-# with the packaged VS Code extension (.vsix). Installed extensions pick it up on their daily check.
+# Push a tag like v0.3.0 (after `npm run version:set -- 0.3.0`) to publish:
+#  - a GitHub Release with the VS Code extension (.vsix)  → picked up by the extension's daily update check
+#  - VS Code Marketplace / Open VSX / npm, each only when its token secret exists
 on:
   push:
     tags: ['v*']
 permissions:
   contents: write
 jobs:
-  vsix:
+  release:
     runs-on: ubuntu-latest
+    env:
+      VSCE_PAT: ${{ secrets.VSCE_PAT }}
+      OVSX_PAT: ${{ secrets.OVSX_PAT }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 22
       - run: npm ci
+      - run: npm run build
       - run: npm test
       - name: Versions must match the tag
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           test "$(node -p "require('./package.json').version")" = "$TAG"
           test "$(node -p "require('./vscode/package.json').version")" = "$TAG"
+          test "$(node -p "require('./plugin/.claude-plugin/plugin.json').version")" = "$TAG"
       - name: Package extension
-        run: |
-          TAG="${GITHUB_REF_NAME#v}"
-          cd vscode && npx --yes @vscode/vsce@latest package --no-dependencies -o "waymark-vscode-$TAG.vsix"
-      - name: Publish release
+        run: cd vscode && npx --yes @vscode/vsce@latest package --no-dependencies -o "waymark-vscode-${GITHUB_REF_NAME#v}.vsix"
+      - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" vscode/*.vsix --title "Waymark $GITHUB_REF_NAME" --generate-notes
+      - name: VS Code Marketplace
+        if: env.VSCE_PAT != ''
+        run: cd vscode && npx --yes @vscode/vsce@latest publish --packagePath "waymark-vscode-${GITHUB_REF_NAME#v}.vsix" -p "$VSCE_PAT"
+      - name: Open VSX (Cursor, Windsurf, VSCodium)
+        if: env.OVSX_PAT != ''
+        run: npx --yes ovsx publish "vscode/waymark-vscode-${GITHUB_REF_NAME#v}.vsix" -p "$OVSX_PAT"
+      - name: npm
+        if: env.NPM_TOKEN != ''
+        run: |
+          npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
+          npm publish --access public

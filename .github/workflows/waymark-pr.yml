@@ -1,0 +1,23 @@
+name: waymark-pr
+# Comments on each pull request with the documented flows (Waymark maps) the change touches.
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  maps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node src/cli.js diff "origin/${{ github.base_ref }}" --range > waymark-report.md
+      - name: Comment (updates the previous Waymark comment)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR" --body-file waymark-report.md --edit-last 2>/dev/null || gh pr comment "$PR" --body-file waymark-report.md

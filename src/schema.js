@@ -1,5 +1,14 @@
 import * as z from 'zod';
 
+// Titles are short labels. Reject markup that agents sometimes leak from their own tool calls
+// (e.g. '</title> <parameter name="query">…') so a broken call cannot corrupt a map.
+const LEAK = /<\/?(parameter|invoke|function_calls|antml|title)\b|<\/[a-z]+>/i;
+export const Title = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((v) => !LEAK.test(v), 'title contains tool-call markup (e.g. "</title>" or "<parameter"); send a plain title');
+
 // A tree node inside a trace. `ref` points at a location id ("1a"); nodes without
 // `ref` are plain labels (e.g. "middleware chain", "async boundary").
 const TreeNode = z.lazy(() =>
@@ -16,7 +25,7 @@ const TreeNode = z.lazy(() =>
 
 export const LocationInput = z.object({
   id: z.string().optional().describe('Stable id "<traceId><letter>", e.g. "1a". Auto-assigned if omitted'),
-  title: z.string().describe('Short name of the step (<= 5 words), e.g. "Validate JWT"'),
+  title: Title.describe('Short name of the step (<= 5 words), e.g. "Validate JWT"'),
   description: z
     .string()
     .describe('ONE short sentence (<= 15 words) shown inline next to the code, e.g. "Dual learning rate for embeddings vs matrices"'),
@@ -32,11 +41,16 @@ export const LocationInput = z.object({
     .string()
     .describe('EXACT text of that line as it appears in the file (used to verify and re-anchor)'),
   symbol: z.string().optional().describe('Function/class/method name, if any'),
+  mapRef: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]{0,80}(#[A-Za-z0-9_-]{1,16})?$/)
+    .optional()
+    .describe('Overview maps: id of a detailed map that explains this part ("auth-flow" or "auth-flow#2b")'),
 });
 
 export const TraceInput = z.object({
   id: z.string().optional().describe('Trace id "1", "2"... Auto-assigned if omitted'),
-  title: z.string(),
+  title: Title,
   description: z.string().describe('One sentence: what this trace shows (shown under the trace title)'),
   diagramTitle: z.string().optional().describe('Title above the trace tree, e.g. "Mid-training Data Pipeline"'),
   motivation: z
@@ -65,7 +79,7 @@ export const LinkInput = z.object({
 });
 
 export const MapInput = z.object({
-  title: z.string(),
+  title: Title,
   description: z
     .string()
     .describe('Summary (2-3 sentences) of what the map covers, citing key nodes inline as [1b], [2c], [3d, 4a]'),
@@ -81,10 +95,14 @@ export const MapInput = z.object({
   links: z.array(LinkInput).optional().describe('Cross-trace relationships between locations'),
   diagram: z.string().optional().describe('Optional Mermaid diagram; generated automatically if omitted'),
   tags: z.array(z.string()).optional(),
+  kind: z
+    .enum(['flow', 'overview'])
+    .optional()
+    .describe('"overview": a map of the whole system whose nodes link (mapRef) to detailed maps. Default "flow"'),
 });
 
 const letters = 'abcdefghijklmnopqrstuvwxyz';
-const letterId = (i) => (i < 26 ? letters[i] : letters[Math.floor(i / 26) - 1] + letters[i % 26]);
+export const letterId = (i) => (i < 26 ? letters[i] : letters[Math.floor(i / 26) - 1] + letters[i % 26]);
 
 /** Assigns ids, normalizes paths and fills in a default linear tree. */
 export function normalizeMap(input) {

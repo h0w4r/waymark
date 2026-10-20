@@ -25,7 +25,12 @@ function loadWorkspace(root) {
       /* skip unreadable map */
     }
   }
-  maps.sort((a, b) => String(b.meta?.updatedAt || '').localeCompare(String(a.meta?.updatedAt || '')));
+  // Overview maps ("map of maps") first, then the most recently updated.
+  maps.sort(
+    (a, b) =>
+      (a.kind === 'overview' ? 0 : 1) - (b.kind === 'overview' ? 0 : 1) ||
+      String(b.meta?.updatedAt || '').localeCompare(String(a.meta?.updatedAt || '')),
+  );
   const byFile = new Map();
   for (const m of maps) {
     for (const n of m.nodes) {
@@ -57,10 +62,29 @@ function normalize(doc) {
         traceTitle: t.title,
         color: t.color,
         stale,
+        check: checkState(l),
+        issues: (l.check && l.check.issues) || [],
+        exec: execState(l),
+        execCount: l.exec ? l.exec.count : 0,
+        notes: l.notes || [],
+        mapRef: l.mapRef || null,
       });
     }
   });
-  return { ...doc, nodes };
+  return { ...doc, kind: doc.kind || 'flow', nodes };
+}
+
+// Same rules as src/state.js (kept dependency-free here).
+const sha = (s) => require('crypto').createHash('sha1').update(s).digest('hex').slice(0, 12);
+function checkState(l) {
+  if (!l.check) return 'unchecked';
+  if (l.check.ctxHash !== l.ctxHash || l.check.proseHash !== sha([l.title, l.description, l.explanation || ''].join('|'))) return 'stale';
+  return l.check.verdict;
+}
+function execState(l) {
+  if (!l.exec) return 'unknown';
+  if (l.exec.ctxHash !== l.ctxHash) return 'stale';
+  return l.exec.hit ? 'hit' : 'miss';
 }
 
 /** Index of the node anchored exactly at (path, line) in a given map, else -1. */
@@ -89,8 +113,18 @@ function gutterSvg(id, color) {
 /** Hover / tooltip markdown for a node (plain markdown; command links added by the caller). */
 function nodeMarkdown(n) {
   const o = [`**${n.id} · ${n.title}** — _${n.mapTitle} › ${n.traceId}. ${n.traceTitle}_`, '', n.description];
+  const flags = [];
+  if (n.check === 'supported') flags.push('✓ fact-checked');
+  if (n.check === 'partial') flags.push('◑ partially verified');
+  if (n.check === 'unsupported') flags.push('✗ fact-check failed');
+  if (n.exec === 'hit') flags.push(`▶ executed by the tests (${n.execCount}×)`);
+  if (n.exec === 'miss') flags.push('○ not executed by the tests');
+  if (n.mapRef) flags.push(`↗ detailed map: ${n.mapRef}`);
+  if (flags.length) o.push('', flags.join(' · '));
+  if (n.issues && n.issues.length && n.check !== 'supported') o.push('', ...n.issues.map((i) => `- ${i}`));
   if (n.stale) o.push('', '⚠ The code here changed after this node was explained — the prose may be outdated.');
   if (n.explanation) o.push('', n.explanation);
+  for (const note of n.notes || []) o.push('', `> ✎ ${note.text} — _${note.author}, ${String(note.at).slice(0, 10)}_`);
   return o.join('\n');
 }
 

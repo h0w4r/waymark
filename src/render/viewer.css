@@ -229,6 +229,23 @@ svg.searching .node.nomatch .dn { opacity: .15; }
 .drift-note code { color: inherit; }
 .dn.drift { border-color: var(--warn); }
 
+/* ---------- fact-check, execution, notes, map links ---------- */
+.st.ck.ok, .st.ex { color: #3fae6a; } .st.ck.warn { color: var(--warn); } .st.ck.bad { color: var(--bad); }
+.st.nx { color: var(--muted); } .st.mr { color: var(--accent); } .st.nt { color: #c79bf2; }
+.chip.okc { color: #3fae6a; border-color: color-mix(in srgb, #3fae6a 60%, transparent); }
+.ck-issues { margin-top: 8px; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; border: 1px solid var(--line); }
+.ck-issues ul { margin: 4px 0 0; padding-left: 18px; }
+.ck-issues.ok { color: #3fae6a; border-color: color-mix(in srgb, #3fae6a 50%, transparent); }
+.ck-issues.warn { color: var(--warn); border-color: var(--warn); }
+.ck-issues.bad { color: var(--bad); border-color: var(--bad); }
+.ex-line { margin-top: 6px; font-size: 12px; color: #3fae6a; } .ex-line.nx { color: var(--muted); }
+.maplink { display: inline-block; margin-top: 8px; text-decoration: none; }
+.notes { margin-top: 8px; }
+.note-item { font-size: 12.5px; padding: 6px 10px; margin-bottom: 6px; border-radius: 8px; background: color-mix(in srgb, #c79bf2 12%, transparent); border-left: 3px solid #c79bf2; }
+.note-item .na { color: var(--muted); font-size: 11.5px; }
+#allMaps { text-decoration: none; }
+#allMaps[hidden] { display: none; }
+
 /* ---------- copy buttons ---------- */
 .tcopy { background: none; border: 1px solid transparent; border-radius: 6px; color: var(--muted); padding: 0 6px; font-size: 13px; }
 .tcopy:hover { color: var(--accent); border-color: var(--line); }

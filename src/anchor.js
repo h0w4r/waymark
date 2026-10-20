@@ -162,16 +162,20 @@ const isCloser = (l) => /^[\s)\]}>;,]*(end\b.*)?$/i.test(l) && l.trim().length >
  * closing bracket), or — for a single statement — a few sibling lines after it.
  */
 export function contextBlock(lines, idx) {
+  return contextIndices(lines, idx).map((i) => lines[i]);
+}
+
+/** 0-based line indices of the block a node talks about (see contextBlock). */
+export function contextIndices(lines, idx) {
   if (idx < 0 || idx >= lines.length) return [];
   const base = indentOf(lines[idx]);
-  const out = [lines[idx]];
-  let i = idx + 1;
-  for (; i < lines.length && out.length < CTX_MAX; i++) {
+  const out = [idx];
+  for (let i = idx + 1; i < lines.length && out.length < CTX_MAX; i++) {
     const l = lines[i];
     if (!l.trim()) continue;
-    if (indentOf(l) > base) out.push(l);
+    if (indentOf(l) > base) out.push(i);
     else {
-      if (out.length > 1 && isCloser(l)) out.push(l);
+      if (out.length > 1 && isCloser(l)) out.push(i);
       break;
     }
   }
@@ -181,11 +185,17 @@ export function contextBlock(lines, idx) {
       const l = lines[j];
       if (!l.trim()) continue;
       if (indentOf(l) < base) break;
-      out.push(l);
+      out.push(j);
       n++;
     }
   }
   return out;
+}
+
+/** 1-based [first, last] line range of a node's block (used to match diffs against nodes). */
+export function contextRange(lines, idx) {
+  const ix = contextIndices(lines, idx);
+  return ix.length ? [ix[0] + 1, ix[ix.length - 1] + 1] : null;
 }
 
 /**

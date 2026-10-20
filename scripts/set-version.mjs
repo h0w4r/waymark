@@ -23,4 +23,8 @@ const VERSION_RE = /const VERSION = '[^']*';/;
 const mcp = path.join(root, 'src', 'mcp.js');
 fs.writeFileSync(mcp, fs.readFileSync(mcp, 'utf8').replace(VERSION_RE, `const VERSION = '${version}';`));
 console.log(`src/mcp.js: VERSION → ${version}`);
+// Rebuild the plugin bundle so plugin/.claude-plugin/plugin.json carries the new version.
+const { spawnSync } = await import('node:child_process');
+const b = spawnSync(process.execPath, [path.join(root, 'scripts', 'build.mjs')], { stdio: 'inherit' });
+if (b.status !== 0) process.exit(b.status || 1);
 console.log(`\nNext: git commit -am "Release v${version}" && git tag v${version} && git push && git push origin v${version}`);

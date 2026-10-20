@@ -2,7 +2,7 @@
   "name": "waymark-vscode",
   "displayName": "Waymark",
   "description": "Narrated, line-anchored maps of how code executes — tree, gutter markers, CodeLens walkthrough and an embedded viewer synced with the editor.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "h0w4r",
   "license": "MIT",
   "repository": {
@@ -128,6 +128,21 @@
         "command": "waymark.explain",
         "title": "Explain node",
         "category": "Waymark"
+      },
+      {
+        "command": "waymark.addNote",
+        "title": "Add team note to the map node at the cursor",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.openMapRef",
+        "title": "Open detailed map",
+        "category": "Waymark"
+      },
+      {
+        "command": "waymark.checkMap",
+        "title": "Fact-check map (agent)",
+        "category": "Waymark"
       }
     ],
     "menus": {
@@ -163,6 +178,11 @@
           "command": "waymark.refreshNarrative",
           "when": "view == waymark.maps && viewItem == waymarkMap",
           "group": "agent@2"
+        },
+        {
+          "command": "waymark.checkMap",
+          "when": "view == waymark.maps && viewItem == waymarkMap",
+          "group": "agent@3"
         }
       ],
       "editor/context": [
@@ -170,6 +190,11 @@
           "command": "waymark.explainAtCursor",
           "when": "waymark.hasMaps",
           "group": "navigation@90"
+        },
+        {
+          "command": "waymark.addNote",
+          "when": "waymark.hasMaps",
+          "group": "navigation@91"
         }
       ],
       "commandPalette": [
@@ -183,6 +208,10 @@
         },
         {
           "command": "waymark.explain",
+          "when": "false"
+        },
+        {
+          "command": "waymark.openMapRef",
           "when": "false"
         }
       ]

@@ -20,13 +20,13 @@
           "description": "La CLI selecciona mapas y pasa la opción `fix` a `verifyMap`.",
           "explanation": "El comando `verify` toma el primer argumento como ID; si falta, `listMaps` aporta todos los IDs. Cada ID llega a `verifyMap` con `opt.fix`, de modo que la selección no altera la lógica de cotejo. Después, la CLI traduce el informe a una línea de estado y cambios visibles [3f]. Si se verifican varios mapas, acumula fallos para decidir una sola salida [3g].",
           "path": "src/cli.js",
-          "lineNumber": 298,
+          "lineNumber": 424,
           "lineContent": "const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);",
           "status": "ok",
-          "fileHash": "0b24cb27279b",
+          "fileHash": "80692f4e5655",
           "ctxHash": "bca6983752e2",
           "snippet": {
-            "startLine": 295,
+            "startLine": 421,
             "code": "    }\n    case 'verify': {\n      const r = root();\n      const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);\n      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.narrative.stale) {\n          const parts = [];\n          if (v.narrative.nodes.length) parts.push('nodes ' + v.narrative.nodes.map((n) => `[${n}]`).join(', '));\n          if (v.narrative.traces.length) parts.push('trace guides ' + v.narrative.traces.join(', '));\n          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);\n        }\n        if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;"
           },
           "narrativeHash": "bca6983752e2"
@@ -37,13 +37,13 @@
           "description": "El MCP verifica un mapa o todos y devuelve sus informes.",
           "explanation": "El controlador MCP resuelve primero la raíz indicada por el cliente y obtiene el ID solicitado o todos los IDs guardados. Invoca `verifyMap` para cada uno con el mismo valor `fix` que recibe la herramienta. Los objetos resultantes se devuelven mediante `text`, sin la presentación `OK`/`STALE`/`BROKEN` de la CLI. Por ello los consumidores MCP deben interpretar `stale`, `broken`, `counts` y `changes` del informe [1g].",
           "path": "src/mcp.js",
-          "lineNumber": 312,
+          "lineNumber": 512,
           "lineContent": "return text(ids.map((i) => verifyMap(r, i, { fix })));",
           "status": "ok",
-          "fileHash": "8971f8920c9b",
+          "fileHash": "2b0b28761299",
           "ctxHash": "6983bf27cfdc",
           "snippet": {
-            "startLine": 309,
+            "startLine": 509,
             "code": "    safe(async ({ id, fix, root }) => {\n      const r = rootOf(root);\n      const ids = id ? [id] : listMaps(r).map((m) => m.id);\n      return text(ids.map((i) => verifyMap(r, i, { fix })));\n    }),\n  );\n\n  server.registerTool(\n    'waymark_render',\n    {\n      title: 'Render waymark viewer',\n      description: 'Regenerates the self-contained HTML viewer of a waymark and optionally opens it in the default browser.',\n      inputSchema: { id: z.string(), open: z.boolean().optional(), root: rootArg },\n    },\n    safe(async ({ id, open, root }) => {\n      const r = rootOf(root);\n      const p = writeHtml(r, loadMap(r, id));\n      if (open) openFile(p);"
           },
           "narrativeHash": "6983bf27cfdc"
@@ -205,7 +205,7 @@
           "lineNumber": 36,
           "lineContent": "const text = fs.readFileSync(abs, 'utf8');",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "ctxHash": "e42b5167ebb4",
           "snippet": {
             "startLine": 33,
@@ -222,7 +222,7 @@
           "lineNumber": 85,
           "lineContent": "const alt = cache.findByBasename(relPath);",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "ctxHash": "6ea2b704c68a",
           "snippet": {
             "startLine": 82,
@@ -239,7 +239,7 @@
           "lineNumber": 92,
           "lineContent": "return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "ctxHash": "faca0f3de148",
           "snippet": {
             "startLine": 89,
@@ -256,7 +256,7 @@
           "lineNumber": 101,
           "lineContent": "if (!wanted || norm(lines[idx0]) === wanted) {",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "ctxHash": "e0d62e67aaa5",
           "snippet": {
             "startLine": 98,
@@ -273,7 +273,7 @@
           "lineNumber": 108,
           "lineContent": "idx = nearest(exact, idx0);",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "ctxHash": "2e6ea77bb67b",
           "snippet": {
             "startLine": 105,
@@ -290,7 +290,7 @@
           "lineNumber": 118,
           "lineContent": "if (!partial.length && loc.symbol) {",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "ctxHash": "33b796cf156b",
           "snippet": {
             "startLine": 115,
@@ -307,7 +307,7 @@
           "lineNumber": 124,
           "lineContent": "status = 'fuzzy';",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "ctxHash": "9486745b2c6a",
           "snippet": {
             "startLine": 121,
@@ -324,7 +324,7 @@
           "lineNumber": 128,
           "lineContent": "if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "ctxHash": "66cbece11b49",
           "snippet": {
             "startLine": 125,
@@ -341,7 +341,7 @@
           "lineNumber": 133,
           "lineContent": "const result = {",
           "status": "ok",
-          "fileHash": "ca1778435482",
+          "fileHash": "bb82554c2c45",
           "ctxHash": "218db3045bd7",
           "snippet": {
             "startLine": 130,
@@ -489,13 +489,13 @@
           "description": "La CLI muestra `BROKEN`, `STALE` u `OK`, los cambios y la revisión narrativa.",
           "explanation": "Para cada informe de `verifyMap` [1a], la CLI elige `BROKEN` si `broken` es positivo, luego `STALE` si `stale` es verdadero y, si no, `OK`. Imprime el ID, commits del mapa y HEAD y la marca `(fixed)` cuando hubo escritura. También muestra cada entrada de `changes` con estado, origen, destino y nota [1f]. Si `narrative.stale`, añade una línea `narrative review` que enumera nodos, guías de trazo e historia afectados y sugiere `waymark refresh <id>` [1h]. El rótulo puede seguir diciendo `STALE` en la ejecución que aplicó `fix`, porque `stale` describe la deriva detectada antes de guardar.",
           "path": "src/cli.js",
-          "lineNumber": 302,
+          "lineNumber": 428,
           "lineContent": "const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';",
           "status": "ok",
-          "fileHash": "0b24cb27279b",
+          "fileHash": "80692f4e5655",
           "ctxHash": "afab7a169973",
           "snippet": {
-            "startLine": 299,
+            "startLine": 425,
             "code": "      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.narrative.stale) {\n          const parts = [];\n          if (v.narrative.nodes.length) parts.push('nodes ' + v.narrative.nodes.map((n) => `[${n}]`).join(', '));\n          if (v.narrative.traces.length) parts.push('trace guides ' + v.narrative.traces.join(', '));\n          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);\n        }\n        if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }"
           },
           "narrativeHash": "afab7a169973"
@@ -506,13 +506,13 @@
           "description": "Falla por anclas rotas, deriva estricta sin fijar o narrativa desfasada.",
           "explanation": "La CLI acumula `bad` mientras procesa uno o varios mapas [1a]. Lo activa si el informe tiene `broken`, si `--strict` encuentra `stale` sin `fixed`, o si `--strict-narrative` encuentra deriva narrativa [1h]. Al terminar, establece `process.exitCode = 1` solo cuando `bad` es verdadero, lo que permite usar la verificación en automatizaciones. `--fix` puede suprimir el fallo estricto por deriva de anclas guardada, pero no un fallo por anclas rotas [1g] ni por narrativa desfasada, que persiste hasta reescribir la prosa.",
           "path": "src/cli.js",
-          "lineNumber": 312,
+          "lineNumber": 438,
           "lineContent": "if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;",
           "status": "ok",
-          "fileHash": "0b24cb27279b",
+          "fileHash": "80692f4e5655",
           "ctxHash": "025d2a1088a8",
           "snippet": {
-            "startLine": 309,
+            "startLine": 435,
             "code": "          if (v.narrative.story) parts.push('story');\n          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);\n        }\n        if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }\n    case 'render': {\n      const r = root();\n      const p = writeHtml(r, loadMap(r, rest[0]));\n      out(p);\n      if (opt.open) openFile(p);\n      return;\n    }\n    case 'delete':\n      return out(`deleted ${deleteMap(root(), rest[0])}`);\n    case 'suggest': {"
           },
           "narrativeHash": "025d2a1088a8"
@@ -579,7 +579,7 @@
     "createdAt": "2026-10-01T17:03:45.835Z",
     "updatedAt": "2026-10-20T02:29:39.515Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "980a6c9d5e9f426c94f8630370d43c03fbc72c4a",
+    "commit": "9fce4e38f8797d3e72d7948c3f5e3646a2783d12",
     "branch": "main",
     "remote": "https://github.com/h0w4r/waymark",
     "anchors": {
@@ -590,6 +590,6 @@
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-20T02:46:16.877Z"
+    "verifiedAt": "2026-10-20T04:02:58.557Z"
   }
 }

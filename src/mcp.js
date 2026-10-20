@@ -7,6 +7,13 @@ import { fileURLToPath } from 'node:url';
 import { resolveRoot } from './git.js';
 import { saveMap, loadMap, listMaps, writeHtml, deleteMap, annotateMap, narrativeGaps } from './store.js';
 import { lintMap } from './lint.js';
+import { noteMap, recordCheck } from './store.js';
+import { diffMaps, renderDiff } from './diff.js';
+import { applyCoverage, parseLcov, runWithV8Coverage } from './coverage.js';
+import { createPlan, addTrace, draftStatus, draftTraces, finalizeDraft, listDrafts } from './parallel.js';
+import { checkGuide, planGuide, traceGuide, finalizeGuide, overviewGuide } from './procedures.js';
+import { TraceInput, LinkInput } from './schema.js';
+import fsSync from 'node:fs';
 import { mapsForFile, renderFileContext, forFileSummary } from './context.js';
 import { verifyMap } from './verify.js';
 import { findInFile } from './anchor.js';
@@ -16,7 +23,7 @@ import { renderMarkdown } from './render/markdown.js';
 import { renderMermaid } from './render/mermaid.js';
 import { openFile } from './open.js';
 
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 const rootArg = z.string().optional().describe('Repository root. Defaults to the server working directory / WAYMARK_ROOT');
 
 const text = (t) => ({ content: [{ type: 'text', text: typeof t === 'string' ? t : JSON.stringify(t, null, 2) }] });
@@ -39,7 +46,7 @@ export function createServer() {
     { name: 'waymark', version: VERSION },
     {
       instructions:
-        'Waymark: hierarchical, line-anchored maps of how code executes. To create one, call waymark_start(query) and follow the returned procedure, then waymark_create. ' +
+        'Waymark: hierarchical, line-anchored, narrated maps of how code executes. To create one, call waymark_start(query) and follow the returned procedure, then waymark_create (or the parallel flow waymark_plan → waymark_add_trace × N → waymark_finalize). Fact-check with waymark_check. ' +
         'To use an existing map as context, read resource waymark://<id> or call waymark_get. Run waymark_verify before trusting an old map.',
     },
   );
@@ -52,7 +59,10 @@ export function createServer() {
         'Begin generating a waymark map for a topic/question. Returns the Waymark agent procedure (structure + storytelling rules), the input format, repo hints (recent files, entry points) and existing maps. Call this first, then explore the code and submit with waymark_create.',
       inputSchema: {
         query: z.string().describe('Topic or question, e.g. "how does checkout payment work?"'),
-        mode: z.enum(['fast', 'smart']).optional().describe('fast: short map quickly; smart (default): thorough map with full storytelling'),
+        mode: z
+          .enum(['fast', 'smart', 'overview', 'parallel'])
+          .optional()
+          .describe('fast: short map quickly; smart (default): thorough map with full storytelling; overview: map of the whole system linking to detailed maps; parallel: plan traces for parallel builders'),
         root: rootArg,
       },
       annotations: { readOnlyHint: true },
@@ -62,7 +72,7 @@ export function createServer() {
       const hints = suggestTopics(r, { limit: 5 });
       const existing = listMaps(r).slice(0, 15).map(({ id, title, query: q, updatedAt }) => ({ id, title, query: q, updatedAt }));
       return text(
-        `${waymarkGuide(query, { mode })}\n## Repository\n\nroot: ${r}\n\n` +
+        `${mode === 'overview' ? overviewGuide(query) + '\n\n' + waymarkGuide(query, { mode: 'fast' }) : mode === 'parallel' ? planGuide(query) : waymarkGuide(query, { mode })}\n## Repository\n\nroot: ${r}\n\n` +
           `Entry points: ${hints.entryPoints.join(', ') || '(none detected)'}\n\n` +
           (hints.viewedFiles.length ? `Recently viewed in the editor: ${hints.viewedFiles.map((f) => f.file).join(', ')}\n\n` : '') +
           `Recently touched: ${hints.recentFiles.slice(0, 12).map((f) => f.file).join(', ') || '(none)'}\n\n` +
@@ -122,7 +132,7 @@ export function createServer() {
       if (!narrative.complete) {
         next.push('Narrative is incomplete (see "narrative"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id="' + doc.id + '").');
       }
-      const lint = lintMap(doc);
+      const lint = lintMap(doc, { mapIds: new Set(listMaps(r).map((m) => m.id)) });
       if (lint.errors) next.push('Lint found ' + lint.errors + ' error(s) (e.g. references to unknown nodes): fix them with waymark_annotate.');
       if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);
       return text({
@@ -173,6 +183,7 @@ export function createServer() {
             }),
           )
           .optional(),
+        links: z.array(LinkInput).optional().describe('Replaces the whole list of cross-trace links (fix labels or ends)'),
         reviewed: z
           .array(z.string())
           .optional()
@@ -271,7 +282,8 @@ export function createServer() {
     safe(async ({ id, root }) => {
       const r = rootOf(root);
       const ids = id ? [loadMap(r, id).id] : listMaps(r).map((m) => m.id);
-      return text(ids.map((i) => lintMap(loadMap(r, i))));
+      const mapIds = new Set(listMaps(r).map((m) => m.id));
+      return text(ids.map((i) => lintMap(loadMap(r, i), { mapIds })));
     }),
   );
 
@@ -295,6 +307,194 @@ export function createServer() {
         refreshGuide(v.id, v.narrative, brokenIds) +
           (nodes ? '\n\n## Stale nodes (stored prose + last snippet)\n\n' + nodes : ''),
       );
+    }),
+  );
+
+  // ---------------- fact-checking
+  server.registerTool(
+    'waymark_check',
+    {
+      title: 'Fact-check a map',
+      description:
+        'Returns the fact-checking procedure for a map plus the full map (prose + code snippets). A skeptical verifier checks every claim against the code, fixes wrong prose with waymark_annotate and records verdicts with waymark_record_check. Best run by a fresh agent/subagent that did not write the map.',
+      inputSchema: { id: z.string(), root: rootArg },
+      annotations: { readOnlyHint: true },
+    },
+    safe(async ({ id, root }) => {
+      const doc = loadMap(rootOf(root), id);
+      return text(checkGuide(doc.id) + '\n\n## Map to check\n\n' + renderMarkdown(doc, { detail: 'full' }));
+    }),
+  );
+
+  const verdict = z.enum(['supported', 'partial', 'unsupported']);
+  server.registerTool(
+    'waymark_record_check',
+    {
+      title: 'Record fact-check verdicts',
+      description:
+        'Stores fact-check verdicts. A verdict stays valid while the node\'s code block and prose are unchanged; it becomes "stale" otherwise. unsupported verdicts are lint errors.',
+      inputSchema: {
+        id: z.string(),
+        nodes: z.array(z.object({ id: z.string(), verdict, issues: z.array(z.string()).optional() })).optional(),
+        traces: z.array(z.object({ id: z.string(), verdict, issues: z.array(z.string()).optional() })).optional(),
+        story: z.object({ verdict, issues: z.array(z.string()).optional() }).optional(),
+        checker: z.string().optional().describe('Who checked (model/agent name)'),
+        root: rootArg,
+      },
+    },
+    safe(async ({ id, root, ...v }) => text(recordCheck(rootOf(root), id, v))),
+  );
+
+  // ---------------- human notes
+  server.registerTool(
+    'waymark_note',
+    {
+      title: 'Add or remove a human note',
+      description:
+        'Adds a human note to a node (team knowledge: gotchas, decisions, links). Notes are never rewritten by agents and survive map regeneration. Use only when the user asks to record something. remove=<index> deletes one.',
+      inputSchema: {
+        id: z.string(),
+        node: z.string(),
+        text: z.string().optional(),
+        author: z.string().optional(),
+        remove: z.number().int().min(0).optional(),
+        root: rootArg,
+      },
+    },
+    safe(async ({ id, node, text: t, author, remove, root }) => text(noteMap(rootOf(root), id, node, { text: t, author, remove }))),
+  );
+
+  // ---------------- change impact (PRs)
+  server.registerTool(
+    'waymark_diff',
+    {
+      title: 'Impact of changes on the maps',
+      description:
+        'Which map nodes a change set touches (their code blocks intersect changed lines), which anchors it breaks and which prose it leaves outdated. base "HEAD" (default) = uncommitted changes; with range=true compares base...HEAD (a branch or PR).',
+      inputSchema: {
+        base: z.string().optional(),
+        range: z.boolean().optional(),
+        format: z.enum(['markdown', 'json']).optional(),
+        root: rootArg,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    safe(async ({ base = 'HEAD', range = false, format = 'markdown', root }) => {
+      const rep = diffMaps(rootOf(root), base, { range });
+      return text(format === 'json' ? rep : renderDiff(rep));
+    }),
+  );
+
+  // ---------------- verification by execution
+  server.registerTool(
+    'waymark_exec',
+    {
+      title: 'Mark nodes executed by tests',
+      description:
+        'Marks which nodes actually ran, from coverage: pass lcov (path to an lcov.info from any language) or command (a test command run with NODE_V8_COVERAGE, Node/JS only). Results show as ▶ in viewers and in context.',
+      inputSchema: {
+        id: z.string().optional().describe('Map id; omit for all maps'),
+        lcov: z.string().optional(),
+        command: z.string().optional().describe('e.g. "npm test"'),
+        root: rootArg,
+      },
+    },
+    safe(async ({ id, lcov, command, root }) => {
+      const r = rootOf(root);
+      let coverage;
+      let source;
+      if (lcov) {
+        coverage = parseLcov(fsSync.readFileSync(lcov, 'utf8'), r);
+        source = 'lcov';
+      } else if (command) {
+        const parts = command.split(' ');
+        const res = runWithV8Coverage(r, parts[0], parts.slice(1));
+        coverage = res.coverage;
+        source = 'v8';
+      } else throw new Error('Pass lcov or command');
+      return text(applyCoverage(r, coverage, { ids: id ? [id] : null, source, command: command || lcov }));
+    }),
+  );
+
+  // ---------------- parallel generation
+  server.registerTool(
+    'waymark_plan',
+    {
+      title: 'Plan a map for parallel builders',
+      description:
+        'Phase 1 of parallel generation: registers the traces to build (title, focus, hints) and returns a draft id plus one ready-to-use builder prompt per trace. Launch one builder (subagent) per trace in parallel; each submits with waymark_add_trace; then waymark_finalize.',
+      inputSchema: {
+        query: z.string(),
+        title: z.string(),
+        language: z.string().optional(),
+        kind: z.enum(['flow', 'overview']).optional(),
+        traces: z.array(z.object({ title: z.string(), focus: z.string(), hints: z.array(z.string()).optional() })).min(1),
+        root: rootArg,
+      },
+    },
+    safe(async ({ root, ...p }) => {
+      const r = rootOf(root);
+      const plan = createPlan(r, p);
+      return text({
+        draft: plan.draft,
+        traces: plan.traces.map((t) => ({ n: t.n, title: t.title, builderPrompt: traceGuide(plan.draft, t.n, plan) })),
+        next: 'Run one builder per trace in parallel (e.g. one waymark subagent each, all in the same message), then call waymark_finalize after reading waymark_draft.',
+      });
+    }),
+  );
+
+  server.registerTool(
+    'waymark_add_trace',
+    {
+      title: 'Submit one trace of a draft',
+      description: 'Phase 2: validates, renumbers (ids <n>a, <n>b…) and anchors ONE trace of a planned draft. Safe to call from parallel builders.',
+      inputSchema: { draft: z.string(), n: z.number().int().positive(), trace: TraceInput, root: rootArg },
+    },
+    safe(async ({ draft, n, trace, root }) => text(addTrace(rootOf(root), draft, n, trace))),
+  );
+
+  server.registerTool(
+    'waymark_draft',
+    {
+      title: 'Read a draft',
+      description: 'Status of a draft (finished/missing traces) and the finished traces as markdown, for the finalize step. Omit draft to list drafts.',
+      inputSchema: { draft: z.string().optional(), root: rootArg },
+      annotations: { readOnlyHint: true },
+    },
+    safe(async ({ draft, root }) => {
+      const r = rootOf(root);
+      if (!draft) return text(listDrafts(r).map(({ plan, ...d }) => d));
+      const st = draftStatus(r, draft);
+      const traces = draftTraces(r, draft);
+      const md = traces.length
+        ? renderMarkdown({ id: draft, title: st.title, description: '', traces }, { detail: 'compact' })
+        : '(no finished traces yet)';
+      const { plan, ...rest } = st;
+      return text(JSON.stringify(rest, null, 2) + '\n\n' + md);
+    }),
+  );
+
+  server.registerTool(
+    'waymark_finalize',
+    {
+      title: 'Finalize a parallel draft',
+      description: 'Phase 3: merges the finished traces into a regular map with the map-level description, story and cross-trace links, then removes the draft.',
+      inputSchema: {
+        draft: z.string(),
+        title: z.string().optional(),
+        description: z.string(),
+        story: z.string().optional(),
+        language: z.string().optional(),
+        links: z.array(LinkInput).optional(),
+        id: z.string().optional(),
+        root: rootArg,
+      },
+    },
+    safe(async ({ draft, root, ...rest }) => {
+      const r = rootOf(root);
+      const { doc, report, narrative, htmlPath } = finalizeDraft(r, draft, rest);
+      server.sendResourceListChanged();
+      return text({ id: doc.id, html: htmlPath, anchors: report, narrative, lint: lintMap(doc, { mapIds: new Set(listMaps(r).map((m) => m.id)) }) });
     }),
   );
 
