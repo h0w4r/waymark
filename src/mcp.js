@@ -6,10 +6,12 @@ import { MapInput } from './schema.js';
 import { fileURLToPath } from 'node:url';
 import { resolveRoot } from './git.js';
 import { saveMap, loadMap, listMaps, writeHtml, deleteMap, annotateMap, narrativeGaps } from './store.js';
+import { lintMap } from './lint.js';
+import { mapsForFile, renderFileContext, forFileSummary } from './context.js';
 import { verifyMap } from './verify.js';
 import { findInFile } from './anchor.js';
 import { suggestTopics } from './suggest.js';
-import { waymarkGuide, enrichGuide } from './guide.js';
+import { waymarkGuide, enrichGuide, refreshGuide } from './guide.js';
 import { renderMarkdown } from './render/markdown.js';
 import { renderMermaid } from './render/mermaid.js';
 import { openFile } from './open.js';
@@ -62,6 +64,7 @@ export function createServer() {
       return text(
         `${waymarkGuide(query, { mode })}\n## Repository\n\nroot: ${r}\n\n` +
           `Entry points: ${hints.entryPoints.join(', ') || '(none detected)'}\n\n` +
+          (hints.viewedFiles.length ? `Recently viewed in the editor: ${hints.viewedFiles.map((f) => f.file).join(', ')}\n\n` : '') +
           `Recently touched: ${hints.recentFiles.slice(0, 12).map((f) => f.file).join(', ') || '(none)'}\n\n` +
           `Existing waymark (reuse/update instead of duplicating): ${existing.length ? JSON.stringify(existing) : 'none'}`,
       );
@@ -119,8 +122,19 @@ export function createServer() {
       if (!narrative.complete) {
         next.push('Narrative is incomplete (see "narrative"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id="' + doc.id + '").');
       }
+      const lint = lintMap(doc);
+      if (lint.errors) next.push('Lint found ' + lint.errors + ' error(s) (e.g. references to unknown nodes): fix them with waymark_annotate.');
       if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);
-      return text({ id: doc.id, resource: `waymark://${doc.id}`, html: htmlPath, json: jsonPath, anchors: report, narrative, next });
+      return text({
+        id: doc.id,
+        resource: `waymark://${doc.id}`,
+        html: htmlPath,
+        json: jsonPath,
+        anchors: report,
+        narrative,
+        lint: { errors: lint.errors, warnings: lint.warnings, issues: lint.issues.slice(0, 15) },
+        next,
+      });
     }),
   );
 
@@ -159,6 +173,10 @@ export function createServer() {
             }),
           )
           .optional(),
+        reviewed: z
+          .array(z.string())
+          .optional()
+          .describe('Prose confirmed still accurate after a code change: node ids ("2b"), "trace:<id>" or "story"'),
         root: rootArg,
       },
     },
@@ -202,19 +220,81 @@ export function createServer() {
     {
       title: 'Get a waymark',
       description:
-        'Returns a waymark for use as context. format: "markdown" (structure + code snippets, default), "compact" (structure + anchor lines only), "json", "mermaid".',
+        'Returns a map for use as context. format: "markdown" (narrative + structure + snippets, default), "compact" (structure + one-line descriptions), "json", "mermaid". Pass trace ("2") or node ("2b") to get only that part — much smaller context.',
       inputSchema: {
-        id: z.string().describe('Waymark id (a unique prefix is enough)'),
+        id: z.string().describe('Map id (a unique prefix is enough)'),
         format: z.enum(['markdown', 'compact', 'json', 'mermaid']).optional(),
+        trace: z.string().optional().describe('Only this trace, e.g. "2"'),
+        node: z.string().optional().describe('Only this node with its trace context, e.g. "2b"'),
         root: rootArg,
       },
       annotations: { readOnlyHint: true },
     },
-    safe(async ({ id, format = 'markdown', root }) => {
+    safe(async ({ id, format = 'markdown', trace, node, root }) => {
       const doc = loadMap(rootOf(root), id);
       if (format === 'json') return text(doc);
       if (format === 'mermaid') return text(renderMermaid(doc));
-      return text(renderMarkdown(doc, { detail: format === 'compact' ? 'compact' : 'full' }));
+      return text(renderMarkdown(doc, { detail: format === 'compact' ? 'compact' : 'full', trace, node }));
+    }),
+  );
+
+  server.registerTool(
+    'waymark_for_file',
+    {
+      title: 'Maps covering a file',
+      description:
+        'Lists the maps, traces and nodes that cover a file (optionally the node nearest to a line), with their one-line descriptions, the explanation of the nearest node and a flag when the code changed since a node was explained. Call it before modifying a file to understand the flow it belongs to.',
+      inputSchema: {
+        path: z.string().describe('File path (absolute or relative to the repo root)'),
+        line: z.number().int().positive().optional(),
+        format: z.enum(['markdown', 'json']).optional(),
+        root: rootArg,
+      },
+      annotations: { readOnlyHint: true },
+    },
+    safe(async ({ path: file, line, format = 'markdown', root }) => {
+      const res = mapsForFile(rootOf(root), file, { line });
+      if (format === 'json') return text(forFileSummary(res));
+      return text(renderFileContext(res, { maxChars: 12000 }) || `No waymark map covers ${res.path}.`);
+    }),
+  );
+
+  server.registerTool(
+    'waymark_lint',
+    {
+      title: 'Lint maps',
+      description:
+        'Static quality checks on maps: references to unknown nodes (errors), missing narrative, nodes not cited in their trace details, nodes missing from the tree, over-long titles/descriptions, very short explanations. Omit id to lint all maps.',
+      inputSchema: { id: z.string().optional(), root: rootArg },
+      annotations: { readOnlyHint: true },
+    },
+    safe(async ({ id, root }) => {
+      const r = rootOf(root);
+      const ids = id ? [loadMap(r, id).id] : listMaps(r).map((m) => m.id);
+      return text(ids.map((i) => lintMap(loadMap(r, i))));
+    }),
+  );
+
+  server.registerTool(
+    'waymark_refresh',
+    {
+      title: 'Refresh outdated narrative',
+      description:
+        'Finds prose whose code changed since it was written (narrative drift: nodes, trace guides, story) and returns the procedure to bring it back in sync with waymark_annotate (or mark it reviewed). Use after code changes in areas covered by a map.',
+      inputSchema: { id: z.string(), root: rootArg },
+      annotations: { readOnlyHint: true },
+    },
+    safe(async ({ id, root }) => {
+      const r = rootOf(root);
+      const v = verifyMap(r, id);
+      const doc = loadMap(r, v.id);
+      if (!v.narrative.stale && !v.broken) return text(`Map ${v.id}: narrative is in sync with the code. Nothing to refresh.`);
+      const brokenIds = v.changes.filter((c) => c.status === 'unresolved' || c.status === 'missing').map((c) => c.id);
+      const nodes = [...new Set([...brokenIds, ...v.narrative.nodes])].map((n) => renderMarkdown(doc, { node: n })).join('\n\n---\n\n');
+      return text(
+        refreshGuide(v.id, v.narrative, brokenIds) +
+          (nodes ? '\n\n## Stale nodes (stored prose + last snippet)\n\n' + nodes : ''),
+      );
     }),
   );
 
@@ -281,6 +361,34 @@ export function createServer() {
     async (uri, { id }) => ({
       contents: [{ uri: uri.href, mimeType: 'text/markdown', text: renderMarkdown(loadMap(rootOf(), String(id))) }],
     }),
+  );
+
+  // @-mention a single trace or node: waymark://<id>/<trace> or waymark://<id>/<node>
+  server.registerResource(
+    'waymark-part',
+    new ResourceTemplate('waymark://{id}/{part}', {
+      list: async () => ({
+        resources: listMaps(rootOf()).flatMap((m) => {
+          try {
+            return loadMap(rootOf(), m.id).traces.map((t) => ({
+              uri: `waymark://${m.id}/${t.id}`,
+              name: `${m.title} › ${t.id}. ${t.title}`,
+              description: t.description,
+              mimeType: 'text/markdown',
+            }));
+          } catch {
+            return [];
+          }
+        }),
+      }),
+    }),
+    { title: 'Waymark trace or node', description: 'One trace ("2") or one node ("2b") of a map, as markdown context', mimeType: 'text/markdown' },
+    async (uri, { id, part }) => {
+      const doc = loadMap(rootOf(), String(id));
+      const isTrace = doc.traces.some((t) => t.id === String(part));
+      const md = renderMarkdown(doc, isTrace ? { trace: String(part) } : { node: String(part) });
+      return { contents: [{ uri: uri.href, mimeType: 'text/markdown', text: md }] };
+    },
   );
 
   server.registerPrompt(

@@ -28,6 +28,17 @@
   }
   const fileOrder = [...new Set(locs.map((l) => l.path))];
 
+  // Narrative drift: prose written for code that changed afterwards (set by `waymark verify --fix`).
+  const drift = meta.narrativeDrift || { nodes: [], traces: [], story: false };
+  const staleNodes = new Set(drift.nodes || []);
+  for (const l of locs) if (l.narrativeHash && l.ctxHash && l.narrativeHash !== l.ctxHash) staleNodes.add(l.id);
+  const staleTraces = new Set(drift.traces || []);
+  const DRIFT_NOTE = 'The code here changed after this was written — the prose may be outdated. Ask your agent: ';
+  const driftNote = (what) => '<div class="drift-note">⚠ ' + esc(DRIFT_NOTE) + '<code>/waymark refresh ' + esc(doc.id) + '</code>' + (what ? ' (' + esc(what) + ')' : '') + '</div>';
+
+  // Embedded in a VS Code webview: talk to the extension instead of opening URLs.
+  const host = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
+
   const prefsKey = 'waymark:' + doc.id;
   const prefs = Object.assign({ root: meta.root || '', editor: 'vscode', mapW: null, view: 'code' }, safeJson(localStorage.getItem(prefsKey)));
   function safeJson(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
@@ -136,7 +147,7 @@
     return r + '/blob/' + c + '/' + l.path + '#L' + l.lineNumber;
   }
   function explanationHtml(l) {
-    if (l.explanation) return md(l.explanation);
+    if (l.explanation) return (staleNodes.has(l.id) ? driftNote() : '') + md(l.explanation);
     return '<p class="empty">No storytelling explanation stored for this node yet. Ask your agent: <code>/waymark enrich ' + esc(doc.id) + '</code></p>';
   }
 
@@ -153,6 +164,7 @@
     const broken = (a.unresolved || 0) + (a.missing || 0);
     if (broken) chips.push('<span class="chip bad">' + broken + ' unverified anchors</span>');
     if (a.fuzzy) chips.push('<span class="chip warn">' + a.fuzzy + ' approximate</span>');
+    if (staleNodes.size) chips.push('<span class="chip warn" title="Code changed after these nodes were explained">' + staleNodes.size + ' explanations to review</span>');
 
     const head =
       '<div class="mp-head"><h1>' + esc(doc.title) + '</h1><div class="chips">' + chips.join('') + '</div>' +
@@ -162,7 +174,7 @@
       '<button class="pill" id="explainAllBtn" title="Expand every node with its explanation">Explain all nodes</button>' +
       '<button class="pill" id="guidesBtn" title="Open every trace guide">Open all guides</button>' +
       '</div>' +
-      (doc.story ? '<div class="story md" id="story" hidden><div class="ai-label">AI generated story</div>' + md(doc.story) + '</div>' : '') +
+      (doc.story ? '<div class="story md" id="story" hidden><div class="ai-label">AI generated story</div>' + (drift.story ? driftNote('story') : '') + md(doc.story) + '</div>' : '') +
       '</div>';
 
     const seen = new Set();
@@ -175,14 +187,17 @@
           inner = '<div class="loc ref-again" data-id="' + l.id + '" style="--tc:' + l.trace.color + '"><div class="loc-top"><span class="lid">' + l.id + '</span><span class="lt">' + esc(n.label || l.title) + '</span></div></div>';
         } else if (l) {
           seen.add(l.id);
-          const st = STATUS[l.status] ? '<span class="st ' + l.status + '" title="' + esc(l.note || l.status) + '">' + STATUS[l.status] + '</span>' : '';
+          const st =
+            (STATUS[l.status] ? '<span class="st ' + l.status + '" title="' + esc(l.note || l.status) + '">' + STATUS[l.status] + '</span>' : '') +
+            (staleNodes.has(l.id) ? '<span class="st drift" title="Code changed after this node was explained">◔</span>' : '');
           inner =
             '<div class="loc" data-id="' + l.id + '" tabindex="0" style="--tc:' + l.trace.color + '">' +
             '<div class="loc-top"><span class="lid">' + l.id + '</span><span class="lt">' + esc(n.label || l.title) + '</span>' + st +
             '<span class="lf" title="' + esc(l.path) + '">' + esc(base(l.path)) + '</span></div>' +
             '<div class="loc-code"><span class="ln">' + l.lineNumber + '</span><code>' + hl(l.lineContent || '', extOf(l.path)) + '</code></div>' +
             '<div class="loc-more"><div class="loc-desc">' + inline(l.description) + '</div>' +
-            '<button class="explain" data-explain="' + l.id + '">' + (l.explanation ? 'Show explanation' : 'Explain') + '</button>' +
+            '<button class="explain" data-explain="' + l.id + '">' + (l.explanation ? 'Show explanation' : 'Explain') + '</button> ' +
+            '<button class="explain" data-copy-node="' + l.id + '" title="Copy this node (with its trace context) as markdown for an agent">Copy context</button>' +
             '<div class="expl md" hidden></div></div></div>';
         } else {
           inner = '<div class="lbl">' + esc(n.label || '…') + '</div>';
@@ -199,9 +214,10 @@
         '<div class="tr-head" data-toggle="' + esc(t.id) + '"><span class="tr-num">' + esc(t.id) + '</span><div class="tr-text">' +
         '<div class="tr-title">' + esc(t.title) + '</div><div class="tr-desc">' + inline(t.description) +
         (hasGuide ? ' <button class="see-more" data-guide="' + esc(t.id) + '">See more</button>' : '') + '</div></div>' +
+        '<button class="tcopy" data-copy-trace="' + esc(t.id) + '" title="Copy this trace as markdown context for an agent">⧉</button>' +
         '<span class="caret">▾</span></div>' +
         (hasGuide
-          ? '<div class="guide md" hidden><div class="ai-label">AI generated guide</div>' +
+          ? '<div class="guide md" hidden><div class="ai-label">AI generated guide</div>' + (staleTraces.has(t.id) ? driftNote('trace guide') : '') +
             (t.motivation ? '<h4>Motivation</h4>' + md(t.motivation) : '') +
             (t.details ? '<h4>Details</h4>' + md(t.details) : '') + '</div>'
           : '') +
@@ -238,6 +254,10 @@
   }
 
   mapPane.addEventListener('click', (e) => {
+    const ct = e.target.closest('[data-copy-trace]');
+    if (ct) { e.stopPropagation(); return copy(ct, (DATA.traceMd || {})[ct.dataset.copyTrace] || '', '⧉'); }
+    const cn = e.target.closest('[data-copy-node]');
+    if (cn) { e.stopPropagation(); return copy(cn, (DATA.nodeMd || {})[cn.dataset.copyNode] || '', 'Copy context'); }
     const r = e.target.closest('[data-ref]');
     if (r) { e.preventDefault(); return select(r.dataset.ref); }
     const sm = e.target.closest('[data-guide]');
@@ -342,7 +362,9 @@
     anno.innerHTML =
       '<span class="lid">' + l.id + '</span><span class="ad">' + inline(l.description) + '</span>' +
       '<button class="xbtn" data-anno-expl>' + (state.annoExpl ? 'Hide' : 'Explain') + '</button>' +
-      '<span class="an">' + (i > 0 ? '<a data-go="' + (i - 1) + '">← prev</a>' : '') + (i < locs.length - 1 ? '<a data-go="' + (i + 1) + '">next →</a>' : '') + '</span>';
+      (staleNodes.has(l.id) ? '<span class="st drift" title="Code changed after this node was explained">◔</span>' : '') +
+      '<span class="an">' + (host ? '<a data-open-editor="' + l.id + '" title="Reveal in the editor">open ↗</a>' : '') +
+      (i > 0 ? '<a data-go="' + (i - 1) + '">← prev</a>' : '') + (i < locs.length - 1 ? '<a data-go="' + (i + 1) + '">next →</a>' : '') + '</span>';
     row.parentNode.insertBefore(anno, row);
     if (state.annoExpl) {
       const ex = document.createElement('div');
@@ -354,6 +376,8 @@
     if (state.view === 'code') codeScroll.scrollTop = Math.max(0, anno.offsetTop - codeScroll.clientHeight / 3);
   }
   codeEl.addEventListener('click', (e) => {
+    const oe = e.target.closest('[data-open-editor]');
+    if (oe) return openInHost(oe.dataset.openEditor);
     const g = e.target.closest('[data-go]');
     if (g) return select(locs[+g.dataset.go].id);
     if (e.target.closest('[data-anno-expl]')) {
@@ -555,21 +579,104 @@
         div.className = 'dn label';
         div.innerHTML = '<div class="t">' + esc(n.label) + '</div>';
       } else {
-        div.className = 'dn ' + n.kind;
+        div.className = 'dn ' + n.kind + (staleNodes.has(n.loc.id) ? ' drift' : '');
         div.dataset.id = n.loc.id;
         div.innerHTML =
           (n.stacked && n.via ? '<div class="v">↳ ' + esc(n.via) + '</div>' : '') +
-          '<div class="h"><span class="i">' + (n.kind === 'again' ? '↺ ' : '') + n.loc.id + '</span><span class="t">' + esc(n.label) + '</span></div>' +
+          '<div class="h"><span class="i">' + (n.kind === 'again' ? '↺ ' : '') + n.loc.id + '</span><span class="t">' + esc(n.label) + '</span>' +
+          (staleNodes.has(n.loc.id) ? '<span class="dr" title="Code changed after this node was explained">◔</span>' : '') + '</div>' +
           '<div class="f">' + esc(base(n.loc.path)) + ':' + n.loc.lineNumber + '</div>';
       }
       if (n.kind === 'label' && n.stacked && n.via) div.insertAdjacentHTML('afterbegin', '<div class="v">↳ ' + esc(n.via) + '</div>');
       fo.appendChild(div);
     }
     applyHidden();
+    renderMinimap();
     fit();
   }
 
-  function applyTransform() { vp.setAttribute('transform', 'translate(' + view.x + ',' + view.y + ') scale(' + view.k + ')'); }
+  // ---- minimap: overview of clusters + current viewport; click/drag to navigate
+  const mini = $('#mini');
+  const miniContent = $('#miniContent');
+  const miniView = $('#miniView');
+  const MINI_W = 170;
+  const MINI_H = 120;
+  let miniScale = 1;
+  function renderMinimap() {
+    if (!dg) return;
+    const b = dg.bounds;
+    miniScale = Math.min(MINI_W / b.w, MINI_H / b.h);
+    mini.setAttribute('width', Math.ceil(b.w * miniScale));
+    mini.setAttribute('height', Math.ceil(b.h * miniScale));
+    miniContent.innerHTML = '';
+    for (const c of dg.clusters) {
+      if (hidden.has(c.trace.id)) continue;
+      el('rect', { x: c.x * miniScale, y: c.y * miniScale, width: c.w * miniScale, height: c.h * miniScale, rx: 3, fill: c.trace.color, 'fill-opacity': 0.18, stroke: c.trace.color, 'stroke-opacity': 0.6 }, miniContent);
+      for (const n of c.nodes) el('rect', { x: n.ax * miniScale, y: n.ay * miniScale, width: NODE_W * miniScale, height: n.h * miniScale, fill: c.trace.color, 'fill-opacity': 0.7 }, miniContent);
+    }
+    updateMinimap();
+  }
+  function updateMinimap() {
+    if (!dg) return;
+    const r = svg.getBoundingClientRect();
+    miniView.setAttribute('x', (-view.x / view.k) * miniScale);
+    miniView.setAttribute('y', (-view.y / view.k) * miniScale);
+    miniView.setAttribute('width', (r.width / view.k) * miniScale);
+    miniView.setAttribute('height', (r.height / view.k) * miniScale);
+  }
+  function miniJump(e) {
+    const mr = mini.getBoundingClientRect();
+    const r = svg.getBoundingClientRect();
+    const gx = (e.clientX - mr.left) / miniScale;
+    const gy = (e.clientY - mr.top) / miniScale;
+    view.x = r.width / 2 - gx * view.k;
+    view.y = r.height / 2 - gy * view.k;
+    applyTransform();
+  }
+  mini.addEventListener('pointerdown', (e) => {
+    mini.setPointerCapture(e.pointerId);
+    miniJump(e);
+    const move = (ev) => miniJump(ev);
+    mini.addEventListener('pointermove', move);
+    mini.addEventListener('pointerup', () => mini.removeEventListener('pointermove', move), { once: true });
+  });
+
+  // ---- export the diagram as a standalone SVG (styles and theme colours inlined)
+  function exportSvg() {
+    if (!dg) return;
+    const b = dg.bounds;
+    const pad = 20;
+    const clone = svg.cloneNode(true);
+    clone.removeAttribute('id');
+    clone.setAttribute('viewBox', [-pad, -pad, b.w + pad * 2, b.h + pad * 2].join(' '));
+    clone.setAttribute('width', b.w + pad * 2);
+    clone.setAttribute('height', b.h + pad * 2);
+    clone.querySelector('#vp').removeAttribute('transform');
+    clone.querySelectorAll('.dim').forEach((x) => x.classList.remove('dim'));
+    clone.classList.remove('focus', 'panning');
+    const cs = getComputedStyle(document.documentElement);
+    const vars = ['--bg', '--panel', '--panel2', '--ink', '--ink2', '--muted', '--line', '--accent', '--mono', '--sans', '--warn']
+      .map((v) => v + ':' + cs.getPropertyValue(v)).join(';');
+    const style = document.createElementNS(SVGNS, 'style');
+    style.textContent = 'svg{' + vars + ';background:' + cs.getPropertyValue('--bg') + '}' + document.querySelector('style').textContent;
+    clone.insertBefore(style, clone.firstChild);
+    const bg = document.createElementNS(SVGNS, 'rect');
+    for (const [k, v] of Object.entries({ x: -pad, y: -pad, width: b.w + pad * 2, height: b.h + pad * 2, fill: cs.getPropertyValue('--bg') })) bg.setAttribute(k, v);
+    clone.insertBefore(bg, style.nextSibling);
+    const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = doc.id + '.svg';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  }
+  $('#exportSvg').onclick = exportSvg;
+
+  function applyTransform() {
+    vp.setAttribute('transform', 'translate(' + view.x + ',' + view.y + ') scale(' + view.k + ')');
+    updateMinimap();
+  }
   let anim = null;
   function animateTo(x, y, k) {
     cancelAnimationFrame(anim);
@@ -728,12 +835,17 @@
       '<div class="expl md" style="--tc:' + l.trace.color + '">' + explanationHtml(l) + '</div>' +
       (snippet ? '<pre>' + snippet + '</pre>' : '') +
       '<div class="acts"><button class="pill" data-open-code>Open in code view</button>' +
-      (ed ? '<a class="pill" href="' + esc(ed) + '">Open in editor</a>' : '') +
+      (host ? '<button class="pill" data-open-editor="' + l.id + '">Open in editor</button>' : ed ? '<a class="pill" href="' + esc(ed) + '">Open in editor</a>' : '') +
+      '<button class="pill" data-copy-node="' + l.id + '">Copy context</button>' +
       (rm ? '<a class="pill" href="' + esc(rm) + '" target="_blank" rel="noopener">View on remote</a>' : '') + '</div>';
     dgCard.hidden = false;
   }
   dgCard.addEventListener('click', (e) => {
     if (e.target.closest('[data-close]')) return clearFocus();
+    const cn = e.target.closest('[data-copy-node]');
+    if (cn) return copy(cn, (DATA.nodeMd || {})[cn.dataset.copyNode] || '', 'Copy context');
+    const oe = e.target.closest('[data-open-editor]');
+    if (oe && host) return openInHost(oe.dataset.openEditor);
     if (e.target.closest('[data-open-code]')) return setView('code');
     const r = e.target.closest('[data-ref]');
     if (r) select(r.dataset.ref, { from: 'diagram' });
@@ -763,11 +875,84 @@
   $('#zfit').onclick = () => fit(true);
   $('#zsel').onclick = () => { const n = state.sel && dg && dg.primary.get(state.sel); if (n) centerOn(n); };
 
+  // ---------------------------------------------------------------- search
+  const searchEl = $('#search');
+  const resultsEl = $('#searchResults');
+  let matches = [];
+  function haystack(l) {
+    return [l.id, l.title, l.description, l.explanation, l.path, l.lineContent, l.symbol, l.trace.title].join(' ').toLowerCase();
+  }
+  function runSearch() {
+    const q = searchEl.value.trim().toLowerCase();
+    const terms = q.split(/\s+/).filter(Boolean);
+    matches = terms.length ? locs.filter((l) => terms.every((t) => haystack(l).includes(t))) : [];
+    document.body.classList.toggle('searching', terms.length > 0);
+    const hit = new Set(matches.map((m) => m.id));
+    $$('.loc[data-id]', mapPane).forEach((c) => c.classList.toggle('match', hit.has(c.dataset.id)));
+    if (dg) $$('.node', svg).forEach((g) => {
+      const d = g.querySelector('.dn[data-id]');
+      g.classList.toggle('nomatch', terms.length > 0 && !(d && hit.has(d.dataset.id)));
+    });
+    svg.classList.toggle('searching', terms.length > 0);
+    if (!terms.length) { resultsEl.hidden = true; return; }
+    resultsEl.innerHTML = matches.length
+      ? matches.slice(0, 14).map((l, i) =>
+          '<div class="sr' + (i === 0 ? ' on' : '') + '" data-ref="' + l.id + '" style="--tc:' + l.trace.color + '"><span class="lid">' + l.id + '</span><span class="srt">' + esc(l.title) +
+          '</span><span class="srf">' + esc(base(l.path)) + ':' + l.lineNumber + '</span></div>').join('') + (matches.length > 14 ? '<div class="sr more">+' + (matches.length - 14) + ' more</div>' : '')
+      : '<div class="sr more">No nodes match</div>';
+    resultsEl.hidden = false;
+  }
+  searchEl.addEventListener('input', runSearch);
+  searchEl.addEventListener('keydown', (e) => {
+    const items = $$('.sr[data-ref]', resultsEl);
+    const cur = items.findIndex((x) => x.classList.contains('on'));
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (!items.length) return;
+      const next = (cur + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      items.forEach((x, i) => x.classList.toggle('on', i === next));
+      items[next].scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') {
+      const it = items[cur >= 0 ? cur : 0];
+      if (it) { select(it.dataset.ref); resultsEl.hidden = true; }
+    } else if (e.key === 'Escape') {
+      searchEl.value = '';
+      runSearch();
+      searchEl.blur();
+    }
+  });
+  resultsEl.addEventListener('mousedown', (e) => {
+    const it = e.target.closest('[data-ref]');
+    if (it) { e.preventDefault(); select(it.dataset.ref); resultsEl.hidden = true; }
+  });
+  searchEl.addEventListener('blur', () => setTimeout(() => (resultsEl.hidden = true), 120));
+  searchEl.addEventListener('focus', () => { if (searchEl.value.trim()) runSearch(); });
+
+  // ---------------------------------------------------------------- VS Code bridge
+  function openInHost(id) {
+    const l = byId.get(id);
+    if (host && l) host.postMessage({ type: 'open', id: l.id, path: l.path, line: l.lineNumber });
+  }
+  if (host) {
+    window.addEventListener('message', (e) => {
+      const m = e.data || {};
+      if (m.type === 'select' && byId.has(m.id) && m.id !== state.sel) select(m.id, { from: 'host' });
+      if (m.type === 'explain' && byId.has(m.id)) {
+        state.annoExpl = true;
+        select(m.id, { from: 'host' });
+        toggleExplain(m.id, true);
+        if (state.view === 'diagram') renderCard(byId.get(m.id));
+      }
+      if (m.type === 'view' && (m.view === 'code' || m.view === 'diagram')) setView(m.view);
+    });
+  }
+
   // ---------------------------------------------------------------- selection & views
   function select(id, opts = {}) {
     const l = byId.get(id);
     if (!l) return;
     state.sel = id;
+    if (host && opts.from !== 'host' && opts.from !== 'boot') host.postMessage({ type: 'select', id, path: l.path, line: l.lineNumber });
     $$('.loc.sel', mapPane).forEach((e) => e.classList.remove('sel'));
     const card = $('.loc[data-id="' + id + '"]:not(.ref-again)', mapPane);
     if (card) {
@@ -817,6 +1002,7 @@
     else if (e.key === 'd') setView(state.view === 'code' ? 'diagram' : 'code');
     else if (e.key === 'f' && state.view === 'diagram') fit(true);
     else if (e.key === 'Escape') clearFocus();
+    else if (e.key === '/') { e.preventDefault(); searchEl.focus(); searchEl.select(); }
   });
 
   // ---------------------------------------------------------------- splitter, settings, copy

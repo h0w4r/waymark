@@ -26,6 +26,9 @@ export function renderHtml(doc, { files = {} } = {}) {
     doc,
     files,
     markdown: renderMarkdown(doc, { detail: 'full' }),
+    // Smaller context blocks for "copy trace / node as context".
+    traceMd: Object.fromEntries(doc.traces.map((t) => [t.id, renderMarkdown(doc, { trace: t.id })])),
+    nodeMd: Object.fromEntries(doc.traces.flatMap((t) => t.locations.map((l) => [l.id, renderMarkdown(doc, { node: l.id })]))),
     mermaid: renderMermaid({ ...doc, diagram: undefined }),
   };
   return `<!doctype html>
@@ -42,6 +45,10 @@ export function renderHtml(doc, { files = {} } = {}) {
   <header id="topbar">
     <span class="brand">WAYMARK</span><span class="brand-sep"></span>
     <span class="top-title"></span>
+    <div class="search">
+      <input id="search" type="search" placeholder="Search nodes…  ( / )" autocomplete="off" spellcheck="false" aria-label="Search nodes">
+      <div id="searchResults" hidden></div>
+    </div>
     <div class="seg" role="tablist" aria-label="View">
       <button id="vCode" role="tab" title="Code view (d)">Code</button>
       <button id="vDiagram" role="tab" title="Diagram view (d)">Diagram</button>
@@ -75,8 +82,10 @@ export function renderHtml(doc, { files = {} } = {}) {
             <button id="zfit" title="Fit all (f)">⤢</button>
             <button id="zsel" title="Center selected node">◎</button>
             <button id="copyMmd" title="Copy the diagram as Mermaid source">⧉</button>
+            <button id="exportSvg" title="Download the diagram as SVG">⤓</button>
           </div>
         </div>
+        <svg id="mini" xmlns="http://www.w3.org/2000/svg" aria-label="Minimap"><g id="miniContent"></g><rect id="miniView"/></svg>
         <svg id="dg" xmlns="http://www.w3.org/2000/svg" aria-label="Interactive diagram">
           <defs>
             <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="color:var(--muted)"/></marker>

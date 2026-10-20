@@ -21,51 +21,106 @@ export function renderTextTree(trace) {
 
 const STATUS_MARK = { ok: '', moved: '', relocated: '', fuzzy: ' (~approx)', unresolved: ' (!unverified)', missing: ' (!missing)' };
 
-/**
- * Context-oriented rendering for agents (what an @-mention injects).
- * detail: "full" includes the narrative (story, guides, explanations) and snippets;
- * "compact" keeps only structure, one-line descriptions and anchors.
- */
-export function renderMarkdown(doc, { detail = 'full', diagram = false } = {}) {
-  const o = [];
-  o.push(`# Waymark: ${doc.title}`);
-  o.push('');
-  o.push(doc.description);
+function header(doc, o) {
   const m = doc.meta || {};
-  o.push('');
+  o.push(`# Waymark: ${doc.title}`, '', doc.description, '');
   o.push(
     `_id: \`${doc.id}\`${m.commit ? ` · commit ${m.commit.slice(0, 8)}` : ''}${m.branch ? ` (${m.branch})` : ''}` +
       `${m.updatedAt ? ` · updated ${m.updatedAt.slice(0, 10)}` : ''}${doc.query ? ` · query: "${doc.query}"` : ''}_`,
   );
+}
 
+function renderLoc(loc, o, full, stale) {
+  o.push(
+    `- **[${loc.id}] ${loc.title}** — \`${loc.path}:${loc.lineNumber}\`${loc.symbol ? ` (\`${loc.symbol}\`)` : ''}${STATUS_MARK[loc.status] || ''}` +
+      `${stale ? ' (⚠ code changed since this was explained)' : ''}`,
+  );
+  o.push(`  ${loc.description}`);
+  if (full && loc.explanation) o.push(`  ${loc.explanation.replace(/\n/g, '\n  ')}`);
+  if (full && loc.snippet?.code) {
+    const numbered = loc.snippet.code
+      .split('\n')
+      .map((l, i) => {
+        const n = loc.snippet.startLine + i;
+        return `${n === loc.lineNumber ? '>' : ' '}${String(n).padStart(5)}  ${l}`;
+      })
+      .join('\n');
+    o.push('  ```', numbered.replace(/^/gm, '  '), '  ```');
+  } else if (loc.lineContent) {
+    o.push(`  \`${loc.lineContent}\``);
+  }
+}
+
+function renderTrace(trace, o, full, staleNodes) {
+  o.push('', `## Trace ${trace.id}: ${trace.title}`, '', trace.description);
+  if (full && trace.motivation) o.push('', '### Motivation', '', trace.motivation);
+  if (full && (trace.details || trace.guide)) o.push('', '### Details', '', trace.details || trace.guide);
+  o.push('', `### ${trace.diagramTitle || 'Tree'}`, '', '```text', renderTextTree(trace), '```', '');
+  for (const loc of trace.locations) renderLoc(loc, o, full, staleNodes.has(loc.id));
+}
+
+/** Parent and children of a location inside its trace tree (first occurrence). */
+function neighbours(trace, id) {
+  let found = null;
+  const walk = (nodes, parent) => {
+    for (const n of nodes || []) {
+      if (found) return;
+      if (n.ref === id) {
+        found = { parent, children: n.children || [] };
+        return;
+      }
+      walk(n.children, n);
+    }
+  };
+  walk(trace.tree, null);
+  return found || { parent: null, children: [] };
+}
+
+/**
+ * Context-oriented rendering for agents (what an @-mention injects).
+ * detail: "full" includes the narrative (story, guides, explanations) and snippets;
+ * "compact" keeps only structure, one-line descriptions and anchors.
+ * trace / node: render only that trace, or one node with its trace context.
+ */
+export function renderMarkdown(doc, { detail = 'full', diagram = false, trace: traceId = null, node: nodeId = null } = {}) {
+  const o = [];
   const full = detail === 'full';
-  if (full && doc.story) o.push('', '## The story', '', doc.story);
+  const staleNodes = new Set(doc.meta?.narrativeDrift?.nodes || []);
+  header(doc, o);
 
-  for (const trace of doc.traces) {
+  if (nodeId) {
+    const trace = doc.traces.find((t) => t.locations.some((l) => l.id === nodeId));
+    if (!trace) throw new Error(`Node "${nodeId}" not found in ${doc.id}`);
+    const loc = trace.locations.find((l) => l.id === nodeId);
+    const byId = new Map(trace.locations.map((l) => [l.id, l]));
+    const label = (n) => (n.ref && byId.get(n.ref) ? `[${n.ref}] ${byId.get(n.ref).title}` : n.label || '(group)');
     o.push('', `## Trace ${trace.id}: ${trace.title}`, '', trace.description);
     if (full && trace.motivation) o.push('', '### Motivation', '', trace.motivation);
-    if (full && (trace.details || trace.guide)) o.push('', '### Details', '', trace.details || trace.guide);
-    o.push('', `### ${trace.diagramTitle || 'Tree'}`, '', '```text', renderTextTree(trace), '```', '');
-    for (const loc of trace.locations) {
-      o.push(
-        `- **[${loc.id}] ${loc.title}** — \`${loc.path}:${loc.lineNumber}\`${loc.symbol ? ` (\`${loc.symbol}\`)` : ''}${STATUS_MARK[loc.status] || ''}`,
-      );
-      o.push(`  ${loc.description}`);
-      if (full && loc.explanation) o.push(`  ${loc.explanation.replace(/\n/g, '\n  ')}`);
-      if (full && loc.snippet?.code) {
-        const numbered = loc.snippet.code
-          .split('\n')
-          .map((l, i) => {
-            const n = loc.snippet.startLine + i;
-            return `${n === loc.lineNumber ? '>' : ' '}${String(n).padStart(5)}  ${l}`;
-          })
-          .join('\n');
-        o.push('  ```', numbered.replace(/^/gm, '  '), '  ```');
-      } else if (loc.lineContent) {
-        o.push(`  \`${loc.lineContent}\``);
-      }
-    }
+    o.push('', `## Node [${loc.id}]`, '');
+    renderLoc(loc, o, true, staleNodes.has(loc.id));
+    const nb = neighbours(trace, nodeId);
+    if (nb.parent) o.push('', `Called from / part of: ${label(nb.parent)}`);
+    if (nb.children.length) o.push(`Next steps: ${nb.children.map((c) => `${c.via ? `(${c.via}) ` : ''}${label(c)}`).join('; ')}`);
+    const links = (doc.links || []).filter((l) => l.from === nodeId || l.to === nodeId);
+    for (const l of links) o.push(`Link: [${l.from}] → [${l.to}]${l.label ? ` (${l.label})` : ''}`);
+    return o.join('\n');
   }
+
+  if (traceId) {
+    const trace = doc.traces.find((t) => t.id === String(traceId));
+    if (!trace) throw new Error(`Trace "${traceId}" not found in ${doc.id}`);
+    renderTrace(trace, o, full, staleNodes);
+    const ids = new Set(trace.locations.map((l) => l.id));
+    const links = (doc.links || []).filter((l) => ids.has(l.from) || ids.has(l.to));
+    if (links.length) {
+      o.push('', '## Links to other traces', '');
+      for (const l of links) o.push(`- [${l.from}] → [${l.to}]${l.label ? `: ${l.label}` : ''}`);
+    }
+    return o.join('\n');
+  }
+
+  if (full && doc.story) o.push('', '## The story', '', doc.story);
+  for (const trace of doc.traces) renderTrace(trace, o, full, staleNodes);
   if (doc.links?.length) {
     o.push('', '## Cross-trace links', '');
     for (const l of doc.links) o.push(`- [${l.from}] → [${l.to}]${l.label ? `: ${l.label}` : ''}`);

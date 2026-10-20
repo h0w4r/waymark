@@ -75,7 +75,31 @@ Flags: `--no-claude`, `--no-codex`, `--no-agents-md`, `--global-bin` (usa el bin
 waymark install --claude-global
 ```
 
-Registra el servidor con `claude mcp add -s user waymark …` (disponible en todos los proyectos, sin aprobación por repo) y copia la skill y el subagente a `~/.claude/skills/waymark` y `~/.claude/agents/waymark.md`. Abre una sesión nueva y escribe `/waymark`.
+Registra el servidor con `claude mcp add -s user waymark …` (disponible en todos los proyectos, sin aprobación por repo), copia la skill y el subagente a `~/.claude/skills/waymark` y `~/.claude/agents/waymark.md`, y añade los **hooks** a `~/.claude/settings.json` (con backup, sin tocar tus otros hooks; `--no-hooks` para omitirlos). Abre una sesión nueva y escribe `/waymark`.
+
+**Hooks (los mapas como memoria del agente):**
+
+| Cuándo | Qué hace |
+|---|---|
+| El agente **lee** un archivo cubierto por un mapa (`PostToolUse Read`) | Le inyecta las trazas a las que pertenece ese archivo (árbol + descripciones + explicación del nodo más cercano), una vez por sesión |
+| Antes de **editarlo** (`PreToolUse Edit/Write`) | Igual si aún no lo vio; si ya lo vio, un recordatorio corto |
+| Después de **editarlo** (`PostToolUse Edit/Write`) | Re-ancla los mapas y avisa qué nodos quedaron con la explicación desactualizada (→ `waymark_refresh`) |
+
+Nunca bloquean la herramienta y fallan en silencio.
+
+### Extensión de VS Code (también Cursor / Windsurf)
+
+```bash
+waymark install --vscode      # empaqueta vscode/ como VSIX y lo instala con `code`
+```
+
+- Vista **Waymark** en la Activity Bar: mapa → traza → nodo (marca los nodos a revisar).
+- **Marcas en el margen** (`1a`, `2b`… con el color de la traza) y **hover** con la explicación.
+- **CodeLens** sobre cada línea anclada del mapa activo: `2b · descripción · Explain · ← prev · next →`.
+- **`Alt+]` / `Alt+[`** recorren los nodos del mapa activo.
+- **Visor embebido** sincronizado en ambos sentidos (nodo → editor, cursor → nodo).
+- **Historial de navegación** (en `.waymark/.local/`, ignorado por git) que alimenta las sugerencias de `/waymark`.
+- Comandos que lanzan `claude "/waymark …"` (crear, añadir storytelling, refrescar explicaciones, verificar).
 
 ### Codex CLI, IDE y desktop
 
@@ -105,8 +129,10 @@ Los tres comparten `~/.codex/config.toml` y además leen `.codex/config.toml` de
 | Añadir storytelling a un mapa existente | `/waymark enrich <id>` | `$waymark enrich <id>` |
 | Sugerencias | `/waymark` | `$waymark` |
 | Listar / ver | `/waymark list` · `/waymark show <id>` | `$waymark list` · `$waymark show <id>` |
-| Drift | `/waymark verify` | `$waymark verify` |
-| Como contexto | `@waymark:waymark://<id>` | "usa el mapa `<id>`" → `waymark_get` |
+| Drift (anclas + narrativa) | `/waymark verify` | `$waymark verify` |
+| Reescribir explicaciones desactualizadas | `/waymark refresh <id>` | `$waymark refresh <id>` |
+| Calidad de la narrativa | `/waymark lint` | `$waymark lint` |
+| Como contexto | `@waymark:waymark://<id>`, una traza `…/<id>/2` o un nodo `…/<id>/2b` | `waymark_get(id, trace?, node?)` |
 
 CLI:
 
@@ -114,10 +140,13 @@ CLI:
 waymark generate "how does auth work?" --open                 # claude si está instalado, si no codex
 waymark generate "how does auth work?" --engine codex -m <modelo> --mode fast
 waymark enrich <id> --open                                     # añade story, Motivation/Details y explicaciones
-waymark annotate <id> patch.json                               # edita la prosa sin re-anclar
+waymark annotate <id> patch.json                               # edita la prosa sin re-anclar ("reviewed": ["2b"] confirma sin cambios)
+waymark refresh <id>                                           # el agente reescribe sólo lo que quedó desactualizado
+waymark lint [id] [--strict]                                   # [refs] rotas, nodos no citados, narrativa faltante…
+waymark for-file src/x.ts [linea]                              # qué mapas/trazas/nodos cubren un archivo
 waymark list
 waymark show <id> --format compact|markdown|json|mermaid
-waymark verify [id] --fix [--strict]
+waymark verify [id] --fix [--strict] [--strict-narrative]
 waymark render <id> --open
 waymark suggest
 ```
@@ -128,7 +157,12 @@ waymark suggest
 
 ```yaml
 - run: npx waymark verify --strict   # falla si algún nodo ya no existe o se movió
+- run: npx waymark lint             # falla si la prosa cita nodos inexistentes
 ```
+
+### Narrativa al día (drift narrativo)
+
+Cada nodo guarda el hash del **bloque de código del que habla** (la línea + su cuerpo por indentación, o unas líneas hermanas si es una sentencia). Mover código no cuenta; **editarlo sí**. `verify` reporta los nodos, guías de traza e historia escritos para código que ya cambió; el visor y la extensión los marcan con ◔; `waymark refresh <id>` / `waymark_refresh` hace que el agente reescriba sólo eso (o lo confirme con `reviewed`).
 
 ## Herramientas MCP
 
@@ -139,8 +173,11 @@ waymark suggest
 | `waymark_annotate(id, {story, traces[], locations[]})` | Escribe/edita la prosa (story, motivation, details, explanation…) sin re-anclar |
 | `waymark_enrich(id)` | Procedimiento + huecos de narrativa + mapa actual, para añadir storytelling a un mapa existente |
 | `waymark_find_anchor(path, pattern)` | Líneas exactas para anclar |
-| `waymark_get(id, format)` / resource `waymark://{id}` | Mapa como contexto |
-| `waymark_verify(id?, fix?)` | Drift: líneas movidas, archivos renombrados, código borrado |
+| `waymark_get(id, format, trace?, node?)` / resources `waymark://{id}`, `waymark://{id}/{traza o nodo}` | Mapa (o sólo una traza / un nodo) como contexto |
+| `waymark_for_file(path, line?)` | Qué mapas, trazas y nodos cubren un archivo, con la explicación del nodo más cercano |
+| `waymark_verify(id?, fix?)` | Drift de anclas (líneas movidas, archivos renombrados, código borrado) y **drift narrativo** |
+| `waymark_refresh(id)` | Procedimiento + nodos/guías a revisar para reescribir sólo la prosa desactualizada |
+| `waymark_lint(id?)` | Calidad: referencias rotas, narrativa faltante, nodos no citados o fuera del árbol, textos demasiado largos |
 | `waymark_suggest_topics`, `waymark_list`, `waymark_render`, `waymark_delete` | — |
 
 Todas aceptan `root` opcional. Estados de ancla: `ok`, `moved`, `relocated` (archivo renombrado), `fuzzy` (revisar), `unresolved`, `missing`. Las rutas fuera del repo se rechazan.
@@ -176,5 +213,5 @@ MIT. Inspirado en Devin Codemaps; no afiliado a Cognition ni Windsurf.
 ## Desarrollo
 
 ```bash
-npm test     # cliente MCP real contra el servidor sobre un repo git temporal + instalador
+npm test     # cliente MCP real sobre repos git temporales, hooks, instalador, drift y la extensión de VS Code (con un stub de la API)
 ```

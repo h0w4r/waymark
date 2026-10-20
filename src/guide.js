@@ -115,6 +115,24 @@ ${JSON.stringify(EXAMPLE, null, 2)}
 `;
 }
 
+/** Procedure to rewrite only the prose whose code changed since it was written. */
+export function refreshGuide(id, drift, broken = []) {
+  const nodes = drift.nodes.map((n) => `[${n}]`).join(', ') || '(none)';
+  const traces = drift.traces.join(', ') || '(none)';
+  return `You are the **Waymark agent**. The code behind parts of map \`${id}\` changed after their prose was written. Bring the map and its narrative back in sync — only where needed.
+
+- Nodes whose anchor line no longer exists (re-anchor, replace or remove them with \`waymark_create\`, keeping all other prose): ${broken.map((n) => `[${n}]`).join(', ') || '(none)'}
+- Nodes whose surrounding code changed: ${nodes}
+- Traces whose guide may be outdated: ${traces}
+- Holistic story possibly outdated: ${drift.story ? 'yes' : 'no'}
+
+1. Call \`waymark_verify(id: "${id}", fix: true)\` first so anchors and snippets point at the current code.
+2. For each listed node, read the current code around it (read-only) and compare with its \`description\` and \`explanation\` (\`waymark_get(id: "${id}", node: "<id>")\` shows both plus the snippet). Rewrite them if they no longer hold; if they are still accurate, list the node id in \`reviewed\` so it stops being flagged.
+3. If a node no longer belongs in the flow, or the flow gained a new important step, update the map structure with \`waymark_create(id: "${id}", ...)\` instead.
+4. Update \`motivation\`/\`details\` of the listed traces and the \`story\` if the behaviour they describe changed; otherwise add \`"trace:<id>"\` / \`"story"\` to \`reviewed\`.
+5. Save prose with \`waymark_annotate\` (same language as the map). Finish with \`waymark_lint\` and fix any errors.`;
+}
+
 /** Procedure to add/upgrade the narrative of an existing map without re-mapping it. */
 export function enrichGuide(id) {
   return `You are the **Waymark agent**. Upgrade the narrative of the existing map \`${id}\` to full storytelling quality.

@@ -16,3 +16,4 @@ jobs:
       - run: npm test
       # Dogfooding: the example maps in .waymark/ document this repo; fail if they drift.
       - run: node src/cli.js verify --strict
+      - run: node src/cli.js lint

@@ -136,6 +136,7 @@ export function anchorLocation(cache, loc) {
     lineNumber: anchorIdx + 1,
     status,
     fileHash: file.hash,
+    ctxHash: contextHash(lines, anchorIdx),
     snippet: { startLine: start + 1, code: lines.slice(start, end).join('\n') },
   };
   if (idx >= 0) result.lineContent = lines[anchorIdx].trim();
@@ -149,6 +150,58 @@ export function anchorLocation(cache, loc) {
   if (notes.length) result.note = notes.join('; ');
   else delete result.note;
   return result;
+}
+
+const CTX_MAX = 60;
+const CTX_SIBLINGS = 4;
+const indentOf = (l) => (l.match(/^\s*/)[0].replace(/\t/g, '    ').length);
+const isCloser = (l) => /^[\s)\]}>;,]*(end\b.*)?$/i.test(l) && l.trim().length > 0;
+
+/**
+ * The code a node talks about: its line plus the block it opens (more-indented lines and the
+ * closing bracket), or — for a single statement — a few sibling lines after it.
+ */
+export function contextBlock(lines, idx) {
+  if (idx < 0 || idx >= lines.length) return [];
+  const base = indentOf(lines[idx]);
+  const out = [lines[idx]];
+  let i = idx + 1;
+  for (; i < lines.length && out.length < CTX_MAX; i++) {
+    const l = lines[i];
+    if (!l.trim()) continue;
+    if (indentOf(l) > base) out.push(l);
+    else {
+      if (out.length > 1 && isCloser(l)) out.push(l);
+      break;
+    }
+  }
+  if (out.length === 1) {
+    // A plain statement: include the next sibling lines at the same indentation.
+    for (let j = idx + 1, n = 0; j < lines.length && n < CTX_SIBLINGS; j++) {
+      const l = lines[j];
+      if (!l.trim()) continue;
+      if (indentOf(l) < base) break;
+      out.push(l);
+      n++;
+    }
+  }
+  return out;
+}
+
+/**
+ * Hash of the code a node talks about (whitespace-insensitive). Moving the block keeps the
+ * hash; editing it changes it — that is how "narrative drift" (prose describing old code)
+ * is detected, independently of whether the anchor line itself still exists.
+ */
+export function contextHash(lines, idx) {
+  const body = contextBlock(lines, idx).map((l) => norm(l)).join('\n');
+  return crypto.createHash('sha1').update(body).digest('hex').slice(0, 12);
+}
+
+/** Combined hash of a trace's node contexts (its guide is stale when this changes). */
+export function traceHash(trace) {
+  const all = trace.locations.map((l) => l.ctxHash || '').join('|');
+  return crypto.createHash('sha1').update(all).digest('hex').slice(0, 12);
 }
 
 /** Anchors every location of a normalized map in place; returns a summary report. */

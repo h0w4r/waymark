@@ -10,7 +10,9 @@ import { saveMap, loadMap, listMaps, writeHtml, deleteMap, mapDir, annotateMap, 
 import { resolveCommand } from './bin.js';
 import { verifyMap } from './verify.js';
 import { suggestTopics } from './suggest.js';
-import { waymarkGuide, enrichGuide } from './guide.js';
+import { waymarkGuide, enrichGuide, refreshGuide } from './guide.js';
+import { lintMap } from './lint.js';
+import { mapsForFile, renderFileContext } from './context.js';
 import { renderMarkdown } from './render/markdown.js';
 import { renderMermaid } from './render/mermaid.js';
 import { openFile } from './open.js';
@@ -31,18 +33,24 @@ Usage: waymark <command> [options]
   create <file.json>     Validate, anchor and store a map written as JSON [--id <id>] [--open]
   list                   List maps in the repo [--json]
   show <id>              Print a map [--format markdown|compact|json|mermaid]
-  verify [id]            Check anchors against current code [--fix] [--strict]
-                         exit 1 if anchors are broken (with --strict: also if stale)
+  verify [id]            Check anchors and narrative drift against current code [--fix] [--strict]
+                         exit 1 if anchors are broken (--strict: also if stale; --strict-narrative:
+                         also if prose was written for code that has since changed)
+  refresh <id>           Rewrite only the prose whose code changed (agent CLI) [--engine] [--model] [--open]
+  lint [id]              Quality checks: unknown [refs], missing narrative, uncited nodes… [--strict] [--json]
+  for-file <path> [line] Maps/traces/nodes covering a file [--json]
+  hook <kind>            Claude Code hook entry point (pre-edit | post-edit | post-read), reads stdin JSON
   render <id>            Regenerate the HTML viewer [--open]
   delete <id>            Delete a map
   suggest                Suggest topics from recent work [--json]
   guide ["<topic>"]      Print the Waymark agent procedure (for any harness)
   install                Wire into a repo for Claude Code + Codex (CLI, IDE, desktop) + AGENTS.md
-                         [--target <dir>] [--no-claude] [--no-codex] [--no-agents-md]
+                         [--target <dir>] [--no-claude] [--no-codex] [--no-agents-md] [--no-hooks]
                          [--claude-global] also register for every project: claude mcp add -s user + ~/.claude/skills|agents
                          [--codex-global]  also register in ~/.codex/config.toml + ~/.agents/skills
                          [--global]        both of the above
                          [--global-bin]    use the waymark-mcp bin instead of an absolute path
+                         [--vscode]        package and install the VS Code extension (vscode/)
   mcp                    Run the MCP server on stdio
 
 Global: --root <dir>  repository root (default: git toplevel of cwd)
@@ -67,10 +75,13 @@ const { values: opt, positionals } = parseArgs({
     open: { type: 'boolean' },
     fix: { type: 'boolean' },
     strict: { type: 'boolean' },
+    'strict-narrative': { type: 'boolean' },
     json: { type: 'boolean' },
     'no-claude': { type: 'boolean' },
     'no-agents-md': { type: 'boolean' },
+    'no-hooks': { type: 'boolean' },
     'global-bin': { type: 'boolean' },
+    vscode: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -185,6 +196,22 @@ async function enrich(id) {
   process.exitCode = code;
 }
 
+async function refresh(id) {
+  if (!id) throw new Error('Usage: waymark refresh <id> [--engine claude|codex]');
+  const r = root();
+  const v = verifyMap(r, id, { fix: true });
+  if (!v.narrative.stale && !v.broken) {
+    out(`waymark: ${v.id} narrative is in sync with the code; nothing to refresh.`);
+    return;
+  }
+  const brokenIds = v.changes.filter((c) => c.status === 'unresolved' || c.status === 'missing').map((c) => c.id);
+  const code = await runAgent(r, refreshGuide(v.id, v.narrative, brokenIds));
+  const after = verifyMap(r, v.id);
+  out(`\nwaymark: ${v.id}  narrative ${after.narrative.stale ? 'still flagged: ' + JSON.stringify(after.narrative) : 'in sync'}`);
+  if (opt.open) openFile(path.join(mapDir(r), `${v.id}.html`));
+  process.exitCode = code;
+}
+
 async function main() {
   if (!cmd || opt.help) return out(HELP);
   switch (cmd) {
@@ -196,6 +223,32 @@ async function main() {
       return generate(rest.join(' '));
     case 'enrich':
       return enrich(rest[0]);
+    case 'refresh':
+      return refresh(rest[0]);
+    case 'lint': {
+      const r = root();
+      const ids = rest[0] ? [loadMap(r, rest[0]).id] : listMaps(r).map((m) => m.id);
+      const results = ids.map((i) => lintMap(loadMap(r, i)));
+      if (opt.json) return out(results);
+      let bad = false;
+      for (const res of results) {
+        out(`${res.errors ? 'ERRORS ' : res.warnings ? 'WARN   ' : 'OK     '} ${res.id}  (${res.errors} errors, ${res.warnings} warnings)`);
+        for (const i of res.issues) out(`        ${i.level.padEnd(5)} ${i.where}: ${i.message}`);
+        if (res.errors || (opt.strict && res.warnings)) bad = true;
+      }
+      if (bad) process.exitCode = 1;
+      return;
+    }
+    case 'for-file': {
+      if (!rest[0]) throw new Error('Usage: waymark for-file <path> [line]');
+      const res = mapsForFile(root(), rest[0], { line: rest[1] ? Number(rest[1]) : null });
+      if (opt.json) return out({ path: res.path, maps: res.maps.map(({ doc, ...m }) => m) });
+      return out(renderFileContext(res, { maxChars: 20000 }) || `No waymark map covers ${res.path}.`);
+    }
+    case 'hook': {
+      const { runHook } = await import('./hooks.js');
+      return runHook(rest[0]);
+    }
     case 'annotate': {
       if (!rest[0] || !rest[1]) throw new Error('Usage: waymark annotate <id> <patch.json|->');
       const raw = rest[1] === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(rest[1], 'utf8');
@@ -235,7 +288,14 @@ async function main() {
         const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';
         out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);
         for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);
-        if (v.broken || (opt.strict && v.stale && !v.fixed)) bad = true;
+        if (v.narrative.stale) {
+          const parts = [];
+          if (v.narrative.nodes.length) parts.push('nodes ' + v.narrative.nodes.map((n) => `[${n}]`).join(', '));
+          if (v.narrative.traces.length) parts.push('trace guides ' + v.narrative.traces.join(', '));
+          if (v.narrative.story) parts.push('story');
+          out(`        narrative  review ${parts.join('; ')} (code changed since written) → waymark refresh ${v.id}`);
+        }
+        if (v.broken || (opt.strict && v.stale && !v.fixed) || (opt['strict-narrative'] && v.narrative.stale)) bad = true;
       }
       if (bad) process.exitCode = 1;
       return;
@@ -265,7 +325,9 @@ async function main() {
           codex: !opt['no-codex'],
           codexGlobal: !!(opt['codex-global'] || opt.global),
           claudeGlobal: !!(opt['claude-global'] || opt.global),
+          vscode: !!opt.vscode,
           agentsMd: !opt['no-agents-md'],
+          hooks: !opt['no-hooks'],
           useGlobalBin: !!opt['global-bin'],
         }),
       );

@@ -37,11 +37,47 @@ function areaOf(file) {
  * Topic suggestions in the spirit of "based on your recent navigation":
  * we use uncommitted + recently committed files, commit subjects and entry points.
  */
+/**
+ * Files the user actually browsed in the editor (recorded by the Waymark VS Code extension
+ * in .waymark/.local/history.json). Recent visits weigh more; decays over ~2 weeks.
+ */
+export function viewedFiles(root, { limit = 30, now = Date.now() } = {}) {
+  try {
+    const h = JSON.parse(fs.readFileSync(path.join(root, '.waymark', '.local', 'history.json'), 'utf8'));
+    return Object.entries(h.files || {})
+      .map(([file, e]) => ({ file, visits: e.visits, last: e.last, score: e.visits * Math.exp(-(now - e.last) / (14 * 864e5)) }))
+      .filter((x) => x.score > 0.05 && !IGNORE_RE.test(x.file))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+  } catch {
+    return [];
+  }
+}
+
 export function suggestTopics(root, { limit = 8 } = {}) {
   const recent = recentFiles(root);
   const subjects = recentSubjects(root, 12);
   const files = trackedFiles(root);
   const entries = entryPoints(root, files);
+  const viewed = viewedFiles(root);
+
+  const suggestions = [];
+  // Navigation history first (closest to Codemaps' "based on your recent navigation").
+  const viewedAreas = new Map();
+  for (const v of viewed) {
+    const a = areaOf(v.file);
+    const cur = viewedAreas.get(a) || { area: a, score: 0, files: [] };
+    cur.score += v.score;
+    if (cur.files.length < 6) cur.files.push(v.file);
+    viewedAreas.set(a, cur);
+  }
+  for (const a of [...viewedAreas.values()].sort((x, y) => y.score - x.score).slice(0, 3)) {
+    suggestions.push({
+      topic: `How does the ${a.area === '.' ? 'root module' : a.area} code you've been reading work end to end?`,
+      reason: `recently viewed in the editor: ${a.files.slice(0, 3).join(', ')}`,
+      seeds: a.files,
+    });
+  }
 
   const areas = new Map();
   for (const { file, score } of recent) {
@@ -54,8 +90,7 @@ export function suggestTopics(root, { limit = 8 } = {}) {
   }
   const hotAreas = [...areas.values()].sort((x, y) => y.score - x.score).slice(0, 5);
 
-  const suggestions = [];
-  for (const a of hotAreas) {
+  for (const a of hotAreas.filter((h) => !viewedAreas.has(h.area))) {
     suggestions.push({
       topic: `How does the ${a.area === '.' ? 'root module' : a.area} code you've been working on fit together?`,
       reason: `recently changed: ${a.files.slice(0, 3).join(', ')}`,
@@ -74,6 +109,7 @@ export function suggestTopics(root, { limit = 8 } = {}) {
   }
   return {
     suggestions: suggestions.slice(0, limit),
+    viewedFiles: viewed.slice(0, 15).map(({ file, visits }) => ({ file, visits })),
     recentFiles: recent.slice(0, 20),
     recentCommits: subjects,
     entryPoints: entries,

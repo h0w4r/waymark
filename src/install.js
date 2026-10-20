@@ -17,6 +17,9 @@ const TOOLS = [
   'waymark_create',
   'waymark_annotate',
   'waymark_enrich',
+  'waymark_refresh',
+  'waymark_lint',
+  'waymark_for_file',
   'waymark_list',
   'waymark_get',
   'waymark_verify',
@@ -45,7 +48,7 @@ ${AGENT_RETURN}
 const SKILL = ({ claude = false } = {}) => `---
 name: waymark
 description: Waymark — create, read, verify and share narrated, line-anchored maps of how code executes (traces of numbered locations 1a, 1b… with an annotated tree, a storytelling guide, per-node explanations and an interactive viewer). Use when the user asks how a flow works end-to-end, asks for a code map/diagram/walkthrough of a feature, mentions waymark or waymark://<id>, or before changing code an existing map covers.
-${claude ? 'argument-hint: "<topic> [--fast] | list | show <id> | enrich <id> | verify [id] | from-chat"\n' : ''}---
+${claude ? 'argument-hint: "<topic> [--fast] | list | show <id> | enrich <id> | refresh <id> | lint | verify [id] | from-chat"\n' : ''}---
 ${MARK}
 # Waymark
 ${claude ? '\nArguments: $ARGUMENTS\n' : ''}
@@ -59,6 +62,8 @@ Always pass \`root\` = the absolute path of the current workspace to \`waymark_*
 - **list** → \`waymark_list\`; show id, title, nodes, updated.
 - **show <id>** → \`waymark_get\` with \`format: "compact"\`; summarize and point to \`.waymark/<id>.html\`.
 - **verify [id]** → \`waymark_verify\` with \`fix: true\`; report moved/relocated/broken anchors.
+- **refresh <id>** → bring prose back in sync after code changes: \`waymark_refresh(id)\` lists nodes/guides whose code changed since they were written (and broken anchors); rewrite them with \`waymark_annotate\` or confirm them with \`reviewed\`.
+- **lint [id]** → \`waymark_lint\`; report errors (unknown [refs]) and warnings (missing narrative, uncited nodes…) and offer to fix them.
 - **enrich <id>** → add the storytelling layer to an existing map: \`waymark_enrich(id)\` returns the procedure and what is missing; write the story, Motivation/Details per trace and an explanation per node, save with \`waymark_annotate\`.
 - **from-chat** → build a map of the code paths discussed in this conversation (derive the topic yourself).
 - **anything else** is a topic → create a map (below). \`--fast\` in the text → \`mode: "fast"\`; otherwise \`"smart"\`.
@@ -72,9 +77,10 @@ Always pass \`root\` = the absolute path of the current workspace to \`waymark_*
 5. Reply with the id, the HTML path and a short summary; offer \`waymark_render(id, open: true)\` (map pane with "See more" guides and "Explain" per node, code view, interactive diagram).
 
 ## Use a map as context
-- Claude Code: \`@waymark:waymark://<id>\`. Any harness: \`waymark_get(id)\` (\`format: "compact"\` for structure only).
-- Before trusting an old map: \`waymark_verify(id, fix: true)\`.
-- Before editing code a map covers, read it; after the change, verify it and update descriptions that no longer hold.
+- Claude Code: \`@waymark:waymark://<id>\`, or just one trace / node: \`@waymark:waymark://<id>/2\`, \`@waymark:waymark://<id>/2b\`. Any harness: \`waymark_get(id, trace?, node?)\` (\`format: "compact"\` for structure only).
+- About to change a file? \`waymark_for_file(path, line?)\` tells which flows it belongs to (the Waymark hooks inject this automatically in Claude Code).
+- Before trusting an old map: \`waymark_verify(id, fix: true)\` — it also reports **narrative drift** (prose written for code that has since changed).
+- After changing code a map covers, run \`waymark_refresh(id)\` and update the prose that no longer holds.
 
 ## Without MCP (CLI fallback)
 \`waymark guide "<topic>"\` prints the procedure; write the map as JSON and run \`waymark create map.json\`. Also \`waymark show <id> --format compact\`, \`waymark verify --fix\`, \`waymark list\`.
@@ -173,8 +179,78 @@ function codexGlobal(serverCmd, written) {
  * Claude Code user scope: MCP server via `claude mcp add -s user` (no per-project approval)
  * plus ~/.claude/skills and ~/.claude/agents, so /waymark shows up in every project.
  */
-function claudeGlobal(serverCmd, written) {
+const CLI_ENTRY = path.join(HERE, 'cli.js').replace(/\\/g, '/');
+const HOOKS = [
+  { event: 'PreToolUse', matcher: 'Edit|Write|MultiEdit|NotebookEdit', kind: 'pre-edit' },
+  { event: 'PostToolUse', matcher: 'Edit|Write|MultiEdit|NotebookEdit', kind: 'post-edit' },
+  { event: 'PostToolUse', matcher: 'Read', kind: 'post-read' },
+];
+const isOurHook = (h) =>
+  typeof h?.command === 'string' && /(waymark|cli\.js"?)\s+hook (pre-edit|post-edit|post-read)\s*$/.test(h.command);
+
+/**
+ * Adds the Waymark hooks to a Claude Code settings.json (merging, never touching other hooks).
+ * remove=true only strips ours. A timestamped backup is kept when the file already existed.
+ */
+export function installClaudeHooks(settingsPath, written, { remove = false, useGlobalBin = false } = {}) {
+  if (remove && !fs.existsSync(settingsPath)) return;
+  let cfg = {};
+  if (fs.existsSync(settingsPath)) {
+    try {
+      cfg = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
+    } catch {
+      written.push(`skipped hooks: ${settingsPath} is not valid JSON`);
+      return;
+    }
+    fs.copyFileSync(settingsPath, `${settingsPath}.backup-waymark-${new Date().toISOString().replace(/[:.]/g, '-')}`);
+  }
+  cfg.hooks = cfg.hooks || {};
+  for (const event of Object.keys(cfg.hooks)) {
+    cfg.hooks[event] = (cfg.hooks[event] || [])
+      .map((g) => ({ ...g, hooks: (g.hooks || []).filter((h) => !isOurHook(h)) }))
+      .filter((g) => g.hooks.length);
+    if (!cfg.hooks[event].length) delete cfg.hooks[event];
+  }
+  if (!remove) {
+    const cmd = (kind) => (useGlobalBin ? `waymark hook ${kind}` : `node "${CLI_ENTRY}" hook ${kind}`);
+    for (const h of HOOKS) {
+      cfg.hooks[h.event] = cfg.hooks[h.event] || [];
+      cfg.hooks[h.event].push({ matcher: h.matcher, hooks: [{ type: 'command', command: cmd(h.kind), timeout: 20 }] });
+    }
+  }
+  if (!Object.keys(cfg.hooks).length) delete cfg.hooks;
+  fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+  fs.writeFileSync(settingsPath, JSON.stringify(cfg, null, 2) + '\n');
+  written.push(`${remove ? 'removed hooks from' : 'hooks →'} ${settingsPath}`);
+}
+
+/** Packages ../vscode as a VSIX (npx @vscode/vsce) and installs it with the `code` CLI. */
+export function installVscode(written) {
+  const dir = path.join(HERE, '..', 'vscode');
+  const npx = resolveCommand('npx');
+  const code = resolveCommand('code');
+  if (!npx || !code) {
+    written.push(`vscode: skipped (${!npx ? 'npx' : 'code'} not found on PATH)`);
+    return;
+  }
+  const version = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8')).version;
+  const vsix = path.join(dir, `waymark-vscode-${version}.vsix`);
+  const pack = spawnSync(npx.command, [...npx.args, '--yes', '@vscode/vsce@latest', 'package', '--no-dependencies', '-o', vsix], {
+    cwd: dir,
+    encoding: 'utf8',
+    shell: !!npx.shell,
+  });
+  if (pack.status !== 0 || !fs.existsSync(vsix)) {
+    written.push(`vscode: packaging failed: ${(pack.stderr || pack.stdout || '').slice(-400)}`);
+    return;
+  }
+  const inst = spawnSync(code.command, [...code.args, '--install-extension', vsix, '--force'], { encoding: 'utf8', shell: !!code.shell });
+  written.push(inst.status === 0 ? `vscode: installed ${path.basename(vsix)} (reload VS Code windows)` : `vscode: install failed: ${inst.stderr || inst.stdout}`);
+}
+
+function claudeGlobal(serverCmd, written, { hooks = true, useGlobalBin = false } = {}) {
   const home = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+  if (hooks) installClaudeHooks(path.join(home, 'settings.json'), written, { useGlobalBin });
   writeManaged(path.join(home, 'skills', 'waymark', 'SKILL.md'), SKILL({ claude: true }), written);
   writeManaged(path.join(home, 'agents', 'waymark.md'), CLAUDE_AGENT(), written);
   removeManaged(path.join(home, 'commands', 'waymark.md'), written);
@@ -226,7 +302,17 @@ function writeManaged(file, content, written) {
   written.push(`wrote: ${file}`);
 }
 
-export function install({ target, claude = true, codex = true, agentsMd = true, codexGlobal: codexGlob = false, claudeGlobal: claudeGlob = false, useGlobalBin = false }) {
+export function install({
+  target,
+  claude = true,
+  codex = true,
+  agentsMd = true,
+  hooks = true,
+  codexGlobal: codexGlob = false,
+  claudeGlobal: claudeGlob = false,
+  useGlobalBin = false,
+  vscode = false,
+}) {
   const written = [];
   const serverCmd = useGlobalBin ? { command: 'waymark-mcp', args: [] } : { command: 'node', args: [MCP_ENTRY] };
 
@@ -240,6 +326,8 @@ export function install({ target, claude = true, codex = true, agentsMd = true, 
     writeManaged(path.join(target, '.claude', 'agents', 'waymark.md'), CLAUDE_AGENT(), written);
     removeManaged(path.join(target, '.claude', 'commands', 'waymark.md'), written);
     writeManaged(path.join(target, '.claude', 'skills', 'waymark', 'SKILL.md'), SKILL({ claude: true }), written);
+    // Hooks live at project level unless installed globally (avoid firing twice).
+    if (hooks) installClaudeHooks(path.join(target, '.claude', 'settings.json'), written, { remove: claudeGlob, useGlobalBin });
   }
   if (codex) {
     // Project-scoped config: Codex loads it only for trusted projects.
@@ -254,7 +342,8 @@ export function install({ target, claude = true, codex = true, agentsMd = true, 
     writeManaged(path.join(skillDir, 'agents', 'openai.yaml'), `# ${MARK}\n${CODEX_SKILL_YAML}`, written);
   }
   if (codexGlob) codexGlobal(serverCmd, written);
-  if (claudeGlob) claudeGlobal(serverCmd, written);
+  if (claudeGlob) claudeGlobal(serverCmd, written, { hooks, useGlobalBin });
+  if (vscode) installVscode(written);
   if (agentsMd) {
     const p = path.join(target, 'AGENTS.md');
     const cur = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';

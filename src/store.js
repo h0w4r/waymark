@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { normalizeMap } from './schema.js';
-import { anchorMap, safeJoin } from './anchor.js';
+import { anchorMap, safeJoin, FileCache, contextHash, traceHash } from './anchor.js';
 import { headCommit, currentBranch, remoteWebUrl } from './git.js';
 import { renderHtml } from './render/html.js';
 
@@ -32,6 +32,7 @@ function filePath(root, id, ext = 'json') {
 export function saveMap(root, input, { id, html = true } = {}) {
   const map = normalizeMap(input);
   const report = anchorMap(root, map);
+  baselineNarrative(map, { force: true });
   const existing = id ? loadMap(root, id, { quiet: true }) : null;
   const now = new Date().toISOString();
   const doc = {
@@ -84,6 +85,40 @@ export function collectFiles(root, doc) {
   return files;
 }
 
+const sha = (s) => crypto.createHash('sha1').update(s).digest('hex').slice(0, 12);
+const storyHash = (doc) => sha(doc.traces.map((t) => traceHash(t)).join('|'));
+
+/**
+ * Records, for every node / trace / the story, a hash of the code the prose was written for.
+ * force=true overwrites (prose just written); otherwise only fills missing baselines (old maps).
+ */
+export function baselineNarrative(doc, { force = false, nodes = null, traces = null, story = false } = {}) {
+  for (const t of doc.traces) {
+    for (const l of t.locations) {
+      if (!l.ctxHash) continue;
+      if (force || !l.narrativeHash || (nodes && nodes.has(l.id))) l.narrativeHash = l.ctxHash;
+    }
+    if (force || !t.narrativeHash || (traces && traces.has(t.id))) t.narrativeHash = traceHash(t);
+  }
+  if (force || !doc.narrativeHash || story) doc.narrativeHash = storyHash(doc);
+  return doc;
+}
+
+/**
+ * Narrative drift: prose written for code that has since changed (anchors may still be fine).
+ * Uses the stored ctxHash of each node (refreshed by create/verify --fix/annotate).
+ */
+export function narrativeDrift(doc) {
+  const nodes = [];
+  const traces = [];
+  for (const t of doc.traces) {
+    for (const l of t.locations) if (l.narrativeHash && l.ctxHash && l.narrativeHash !== l.ctxHash) nodes.push(l.id);
+    if (t.narrativeHash && t.narrativeHash !== traceHash(t)) traces.push(t.id);
+  }
+  const story = !!doc.narrativeHash && doc.narrativeHash !== storyHash(doc);
+  return { nodes, traces, story, stale: nodes.length > 0 || traces.length > 0 || story };
+}
+
 /** Which narrative fields are still empty (drives the "fill with waymark_annotate" hint). */
 export function narrativeGaps(doc) {
   const gaps = { story: !doc.story, motivation: [], details: [], explanation: [] };
@@ -108,16 +143,27 @@ export function annotateMap(root, id, patch) {
     if (typeof val === 'string' && obj[key] !== val) {
       obj[key] = val;
       changed++;
+      return true;
     }
+    return false;
   };
-  for (const k of ['title', 'description', 'story', 'language']) set(doc, k, patch[k]);
+  const touchedNodes = new Set();
+  const touchedTraces = new Set();
+  let touchedStory = false;
+  // Prose confirmed accurate without edits: re-baseline it so it stops being flagged.
+  for (const r of patch.reviewed || []) {
+    if (r === 'story') touchedStory = true;
+    else if (String(r).startsWith('trace:')) touchedTraces.add(String(r).slice(6));
+    else touchedNodes.add(String(r));
+  }
+  for (const k of ['title', 'description', 'story', 'language']) if (set(doc, k, patch[k]) && k === 'story') touchedStory = true;
   for (const tp of patch.traces || []) {
     const t = doc.traces.find((x) => x.id === String(tp.id));
     if (!t) {
       unknown.push(`trace ${tp.id}`);
       continue;
     }
-    for (const k of ['title', 'description', 'diagramTitle', 'motivation', 'details']) set(t, k, tp[k]);
+    for (const k of ['title', 'description', 'diagramTitle', 'motivation', 'details']) if (set(t, k, tp[k])) touchedTraces.add(t.id);
   }
   for (const lp of patch.locations || []) {
     const l = doc.traces.flatMap((t) => t.locations).find((x) => x.id === lp.id);
@@ -125,16 +171,24 @@ export function annotateMap(root, id, patch) {
       unknown.push(`location ${lp.id}`);
       continue;
     }
-    for (const k of ['title', 'description', 'explanation']) set(l, k, lp[k]);
+    for (const k of ['title', 'description', 'explanation']) if (set(l, k, lp[k])) touchedNodes.add(l.id);
   }
   for (const t of doc.traces) {
     if (t.guide && !t.details) t.details = t.guide;
     delete t.guide;
   }
-  doc.meta = { ...doc.meta, updatedAt: new Date().toISOString() };
+  // Rewritten prose now describes the current code: refresh context hashes and re-baseline it.
+  refreshContextHashes(root, doc);
+  baselineNarrative(doc, { nodes: touchedNodes, traces: touchedTraces, story: touchedStory });
+  const drift = narrativeDrift(doc);
+  doc.meta = {
+    ...doc.meta,
+    updatedAt: new Date().toISOString(),
+    narrativeDrift: drift.stale ? { nodes: drift.nodes, traces: drift.traces, story: drift.story } : undefined,
+  };
   persist(root, doc);
   const htmlPath = writeHtml(root, doc);
-  return { id: doc.id, changed, unknown, narrative: narrativeGaps(doc), htmlPath };
+  return { id: doc.id, changed, unknown, narrative: narrativeGaps(doc), drift, htmlPath };
 }
 
 export function persist(root, doc) {
@@ -187,6 +241,18 @@ export function listMaps(root) {
     })
     .filter(Boolean)
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+}
+
+/** Recomputes each node's ctxHash at its stored line (no re-anchoring). */
+export function refreshContextHashes(root, doc) {
+  const cache = new FileCache(root);
+  for (const t of doc.traces) {
+    for (const l of t.locations) {
+      const f = cache.read(l.path);
+      if (f) l.ctxHash = contextHash(f.lines, Math.min(Math.max(l.lineNumber - 1, 0), f.lines.length - 1));
+    }
+  }
+  return doc;
 }
 
 export function deleteMap(root, id) {

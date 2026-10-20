@@ -207,6 +207,36 @@ svg .hid { display: none; }
 #dgCard pre .r .n { color: var(--muted); display: inline-block; width: 36px; }
 #dgCard .acts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 
+/* ---------- search ---------- */
+.search { position: relative; }
+#search { width: 220px; background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 5px 10px; font: 12.5px var(--sans); outline: none; }
+#search:focus { border-color: var(--accent); width: 300px; }
+#searchResults { position: absolute; top: 34px; left: 0; width: 380px; max-height: 60vh; overflow: auto; z-index: 20; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 4px; }
+#searchResults[hidden] { display: none; }
+.sr { display: flex; gap: 8px; align-items: baseline; padding: 6px 8px; border-radius: 7px; cursor: pointer; }
+.sr.on, .sr[data-ref]:hover { background: var(--accent-soft); }
+.sr .lid { color: var(--tc); }
+.srt { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.srf { font: 11px var(--mono); color: var(--muted); }
+.sr.more { color: var(--muted); cursor: default; font-size: 12px; }
+body.searching .loc[data-id]:not(.match) { opacity: .35; }
+body.searching .loc.match { box-shadow: inset 3px 0 0 var(--accent); }
+svg.searching .node.nomatch .dn { opacity: .15; }
+
+/* ---------- narrative drift ---------- */
+.st.drift, .dn .dr { color: var(--warn); font-size: 12px; margin-left: 4px; }
+.drift-note { margin: 0 0 8px; padding: 6px 10px; border-radius: 8px; border: 1px dashed var(--warn); color: var(--warn); font: 12px/1.45 var(--sans); }
+.drift-note code { color: inherit; }
+.dn.drift { border-color: var(--warn); }
+
+/* ---------- copy buttons ---------- */
+.tcopy { background: none; border: 1px solid transparent; border-radius: 6px; color: var(--muted); padding: 0 6px; font-size: 13px; }
+.tcopy:hover { color: var(--accent); border-color: var(--line); }
+
+/* ---------- minimap ---------- */
+#mini { position: absolute; left: 12px; bottom: 30px; z-index: 3; background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 8px; cursor: crosshair; box-shadow: var(--shadow); }
+#miniView { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
+
 /* ---------- narrow screens ---------- */
 @media (max-width: 900px) {
   body { overflow: auto; }
@@ -215,5 +245,8 @@ svg .hid { display: none; }
   #splitter { display: none; }
   #rightPane { min-height: 60vh; }
   .top-title { display: none; }
+  #search, #search:focus { width: 150px; }
+  #searchResults { width: min(380px, 90vw); }
+  #mini { display: none; }
   .anno, .anno-expl { margin-left: 16px; }
 }
