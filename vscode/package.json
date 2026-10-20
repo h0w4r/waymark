@@ -26,7 +26,8 @@
   "main": "./extension.js",
   "activationEvents": [
     "workspaceContains:.waymark/*.json",
-    "onView:waymark.maps"
+    "onView:waymark.maps",
+    "onStartupFinished"
   ],
   "contributes": {
     "viewsContainers": {
