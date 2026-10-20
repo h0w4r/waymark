@@ -4,7 +4,7 @@
 
 > *waymark*: marca que señala el camino en una ruta.
 
-Réplica abierta de [Devin Codemaps](https://docs.devin.ai/desktop/codemaps) para cualquier harness agéntico: mapas **jerárquicos y anclados a líneas** de cómo se ejecuta el código (trazas → nodos numerados `1a, 1b…` → `archivo:línea`), con guía, diagrama y un visor HTML compartible. Funciona en **Claude Code**, **Codex CLI / IDE / desktop** y cualquier cliente MCP.
+Réplica abierta de [Devin Codemaps](https://docs.devin.ai/desktop/codemaps) para cualquier harness agéntico: mapas **jerárquicos, narrados y anclados a líneas** de cómo se ejecuta el código (trazas → nodos numerados `1a, 1b…` → `archivo:línea`), con una historia holística, guías *Motivation/Details* por traza, una explicación tipo storytelling por nodo, un visor de código con los archivos embebidos y un diagrama interactivo. Funciona en **Claude Code**, **Codex CLI / IDE / desktop** y cualquier cliente MCP.
 
 ```
 ┌──────── harness (Claude Code, Codex CLI/desktop, Cursor, Agent SDK, CI…) ────────┐
@@ -23,12 +23,19 @@ Réplica abierta de [Devin Codemaps](https://docs.devin.ai/desktop/codemaps) par
 | Devin Codemaps | Waymark |
 |---|---|
 | Agente especializado que explora el repo | Subagente `waymark` (Claude Code y Codex), skill `waymark`, tool `waymark_start`, o `waymark generate` headless (`claude -p` / `codex exec`) |
-| Vista jerárquica de ejecución y relaciones | Trazas con `tree` anidado (+ nodos-etiqueta), `links` entre trazas, diagrama Mermaid |
-| Click en un nodo → archivo y función | Visor: snippet con línea resaltada, *Open in editor* (VS Code/Cursor/Windsurf/JetBrains) y *View on remote* (GitHub/GitLab/Bitbucket/Azure, fijado al commit) |
+| Modos *Fast* / *Smart* | `mode: "fast" \| "smart"` en `waymark_start`, `--mode` en `generate`, `--fast` en la skill |
+| Resumen del mapa con referencias `[1b]`, `[2e, 3e]` | `description` con referencias clicables (también listas `[2e, 3e]`) |
+| Narrativa holística | `story`: la historia completa del sistema (problema → recorrido → cómo encaja → takeaways), botón *Read the full story* |
+| *See more* → "AI generated guide" con **Motivation** y **Details** | `motivation` + `details` por traza, mismo layout |
+| Explicación por nodo | `explanation` (3-6 frases, storytelling) en cada nodo; botón **Explain** en la tarjeta, en la anotación del código y en el diagrama; *Explain all nodes* |
+| Árbol anotado por traza (nodos anclados + pasos intermedios) | `tree` con nodos-etiqueta, referencias repetidas, `diagramTitle` y aristas etiquetadas `via` |
+| Visor de código: pestañas por archivo, marcadores en el canalón, anotación "← prev · next →" | Igual, con los **archivos completos embebidos** en el HTML (snapshot) |
+| Diagrama visual con clusters por traza; click → código | **Diagrama interactivo propio (sin CDN)**: pan/zoom, cajas de color por traza, aristas con etiqueta, enlaces entre trazas, foco de ruta (atenúa el resto), tooltip, tarjeta de detalle con explicación y código, leyenda para ocultar trazas, doble click → código |
 | Sugerencias según historial de navegación | `waymark_suggest_topics`: archivos sin commitear + commits recientes + entry points |
 | Crear desde una conversación | `/waymark from-chat` · `$waymark from-chat` |
-| Compartir como link | HTML autocontenido (offline; sólo el diagrama usa CDN). Deep-links `#1a` |
-| `@`-mention como contexto | Claude Code: `@waymark:waymark://<id>`. Codex y otros: `waymark_get(id)` |
+| Compartir como link | HTML autocontenido 100% offline. Deep-links `#1a` |
+| `@`-mention como contexto | Claude Code: `@waymark:waymark://<id>`. Codex y otros: `waymark_get(id)` (incluye la narrativa) |
+| — | **Extra:** `/waymark enrich <id>` añade el storytelling a mapas existentes; `waymark_annotate` edita la prosa sin re-anclar |
 | — | **Extra:** cada nodo se verifica contra el código (`lineContent` exacto) y se re-ancla; `waymark verify --strict` detecta mapas desactualizados en CI |
 
 Diferencias: no hay panel nativo en el IDE (el visor es HTML + links al editor) y el "historial de navegación" se aproxima con git.
@@ -93,7 +100,9 @@ Los tres comparten `~/.codex/config.toml` y además leen `.codex/config.toml` de
 
 | | Claude Code | Codex (CLI / IDE / desktop) |
 |---|---|---|
-| Crear | `/waymark cómo funciona el checkout` | `$waymark cómo funciona el checkout` |
+| Crear (smart) | `/waymark cómo funciona el checkout` | `$waymark cómo funciona el checkout` |
+| Crear rápido | `/waymark cómo funciona el checkout --fast` | `$waymark … --fast` |
+| Añadir storytelling a un mapa existente | `/waymark enrich <id>` | `$waymark enrich <id>` |
 | Sugerencias | `/waymark` | `$waymark` |
 | Listar / ver | `/waymark list` · `/waymark show <id>` | `$waymark list` · `$waymark show <id>` |
 | Drift | `/waymark verify` | `$waymark verify` |
@@ -103,7 +112,9 @@ CLI:
 
 ```bash
 waymark generate "how does auth work?" --open                 # claude si está instalado, si no codex
-waymark generate "how does auth work?" --engine codex -m <modelo>
+waymark generate "how does auth work?" --engine codex -m <modelo> --mode fast
+waymark enrich <id> --open                                     # añade story, Motivation/Details y explicaciones
+waymark annotate <id> patch.json                               # edita la prosa sin re-anclar
 waymark list
 waymark show <id> --format compact|markdown|json|mermaid
 waymark verify [id] --fix [--strict]
@@ -123,8 +134,10 @@ waymark suggest
 
 | Tool | Para qué |
 |---|---|
-| `waymark_start(query)` | Procedimiento del agente + formato + pistas del repo + mapas existentes |
-| `waymark_create({...map, id?})` | Valida, ancla, guarda JSON+HTML; devuelve reporte de anclas |
+| `waymark_start(query, mode?)` | Procedimiento del agente (estructura + reglas de storytelling) + formato + pistas del repo + mapas existentes |
+| `waymark_create({...map, id?})` | Valida, ancla, guarda JSON+HTML; devuelve reporte de anclas y de narrativa faltante |
+| `waymark_annotate(id, {story, traces[], locations[]})` | Escribe/edita la prosa (story, motivation, details, explanation…) sin re-anclar |
+| `waymark_enrich(id)` | Procedimiento + huecos de narrativa + mapa actual, para añadir storytelling a un mapa existente |
 | `waymark_find_anchor(path, pattern)` | Líneas exactas para anclar |
 | `waymark_get(id, format)` / resource `waymark://{id}` | Mapa como contexto |
 | `waymark_verify(id?, fix?)` | Drift: líneas movidas, archivos renombrados, código borrado |
@@ -138,19 +151,23 @@ Ver `src/schema.js` y el ejemplo en `src/guide.js`:
 
 ```jsonc
 {
-  "title": "...", "description": "...", "query": "...",
+  "title": "...", "query": "...", "language": "es",
+  "description": "resumen de 2-3 frases que cita [1a], [2b, 2c]",
+  "story": "historia holística en markdown (problema → recorrido → cómo encaja → takeaways)",
   "traces": [{
-    "id": "1", "title": "...", "description": "...",
-    "locations": [{ "id": "1a", "title": "...", "description": "...",
+    "id": "1", "title": "...", "description": "una frase", "diagramTitle": "Título del árbol",
+    "motivation": "por qué existe esta parte (markdown)",
+    "details": "recorrido narrado que cita cada nodo [1a] (markdown)",
+    "locations": [{ "id": "1a", "title": "≤ 5 palabras", "description": "una frase ≤ 15 palabras",
+                    "explanation": "3-6 frases tipo storytelling (markdown)",
                     "path": "src/x.ts", "lineNumber": 42, "lineContent": "exact line text", "symbol": "fn" }],
-    "tree": [{ "ref": "1a", "children": [{ "label": "async", "children": [{ "ref": "1b" }] }] }],
-    "guide": "markdown que referencia [1a]"
+    "tree": [{ "ref": "1a", "children": [{ "label": "paso intermedio" }, { "ref": "1b", "via": "devuelve el token" }] }]
   }],
   "links": [{ "from": "1b", "to": "2a", "label": "..." }]
 }
 ```
 
-Se recomienda commitear `.waymark/` para compartir los mapas con el equipo. Este repo incluye tres mapas de ejemplo sobre su propio código en [`.waymark/`](.waymark/) (dos generados con Claude Code y uno con Codex); CI los verifica con `verify --strict`.
+Se recomienda commitear `.waymark/` para compartir los mapas con el equipo. Este repo incluye mapas de ejemplo sobre su propio código en [`.waymark/`](.waymark/) (generados con Claude Code y con Codex, uno en español con 49 nodos narrados); CI los verifica con `verify --strict`. Mapas antiguos sin narrativa siguen funcionando (`guide` se lee como `details`); `waymark enrich <id>` les añade el storytelling.
 
 ## Licencia
 

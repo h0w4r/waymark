@@ -6,11 +6,11 @@ import { spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { resolveRoot } from './git.js';
-import { saveMap, loadMap, listMaps, writeHtml, deleteMap, mapDir } from './store.js';
+import { saveMap, loadMap, listMaps, writeHtml, deleteMap, mapDir, annotateMap, narrativeGaps } from './store.js';
 import { resolveCommand } from './bin.js';
 import { verifyMap } from './verify.js';
 import { suggestTopics } from './suggest.js';
-import { waymarkGuide } from './guide.js';
+import { waymarkGuide, enrichGuide } from './guide.js';
 import { renderMarkdown } from './render/markdown.js';
 import { renderMermaid } from './render/mermaid.js';
 import { openFile } from './open.js';
@@ -24,7 +24,10 @@ Usage: waymark <command> [options]
 
   generate "<topic>"     Build a map headlessly with an agent CLI
                          [--engine claude|codex] (default: claude if installed, else codex)
-                         [--model <m>] [--open] [--max-turns <n> (claude)] [--approval <mode> (codex)]
+                         [--mode fast|smart] [--model <m>] [--open] [--max-turns <n> (claude)] [--approval <mode> (codex)]
+  enrich <id>            Add storytelling (story, Motivation/Details, per-node explanations) to an
+                         existing map with an agent CLI [--engine claude|codex] [--model <m>] [--open]
+  annotate <id> <patch.json>  Apply prose fields (story, traces[].motivation|details, locations[].explanation)
   create <file.json>     Validate, anchor and store a map written as JSON [--id <id>] [--open]
   list                   List maps in the repo [--json]
   show <id>              Print a map [--format markdown|compact|json|mermaid]
@@ -54,6 +57,7 @@ const { values: opt, positionals } = parseArgs({
     model: { type: 'string' },
     'max-turns': { type: 'string' },
     engine: { type: 'string' },
+    mode: { type: 'string' },
     approval: { type: 'string' },
     'no-codex': { type: 'boolean' },
     'codex-global': { type: 'boolean' },
@@ -126,19 +130,17 @@ function pickEngine() {
   return resolveCommand('claude') ? 'claude' : 'codex';
 }
 
-async function generate(topic) {
-  if (!topic) throw new Error('Usage: waymark generate "<topic>" [--engine claude|codex]');
-  const r = root();
+/** Runs Claude Code or Codex headlessly with only read tools + the waymark MCP server. */
+async function runAgent(r, task) {
   const engine = pickEngine();
-  const before = new Set(listMaps(r).map((m) => m.id));
   const tools = engine === 'codex' ? 'read-only shell commands (rg, sed -n, git grep, ls)' : 'Read/Grep/Glob';
   const prompt =
-    waymarkGuide(topic) +
-    `\n\nRepository root: ${r}\nWork autonomously: do not ask questions. Explore with ${tools} only, submit with waymark_create ` +
-    `(pass root="${fwd(r)}"), fix anchors until healthy, then answer with the id and a short summary.`;
+    task +
+    `\n\nRepository root: ${r}\nWork autonomously: do not ask questions. Explore with ${tools} only. ` +
+    `Always pass root="${fwd(r)}" to waymark_* tools. When done, answer with the map id and a short summary.`;
   const inv = engine === 'codex' ? codexInvocation(r, prompt) : claudeInvocation(r, prompt);
   if (!inv.bin) throw new Error(`"${engine}" CLI not found on PATH`);
-  out(`waymark: generating with ${engine}…`);
+  out(`waymark: running ${engine}…`);
   const code = await new Promise((res, rej) => {
     const p = spawn(inv.bin.command, [...inv.bin.args, ...inv.args], {
       cwd: r,
@@ -149,15 +151,38 @@ async function generate(topic) {
     p.on('close', res);
     if (inv.stdin) p.stdin.end(inv.stdin);
   }).finally(inv.cleanup);
+  return code ?? 1;
+}
+
+async function generate(topic) {
+  if (!topic) throw new Error('Usage: waymark generate "<topic>" [--engine claude|codex] [--mode fast|smart]');
+  const r = root();
+  const before = new Set(listMaps(r).map((m) => m.id));
+  const mode = opt.mode === 'fast' ? 'fast' : 'smart';
+  const code = await runAgent(r, waymarkGuide(topic, { mode }));
   const created = listMaps(r).filter((m) => !before.has(m.id));
   if (created[0]) {
     const html = path.join(mapDir(r), `${created[0].id}.html`);
+    const gaps = narrativeGaps(loadMap(r, created[0].id));
     out(`\nwaymark: ${created[0].id}\nhtml: ${html}`);
+    if (!gaps.complete) out(`narrative incomplete — run: waymark enrich ${created[0].id}`);
     if (opt.open) openFile(html);
   } else if (code === 0) {
     out('\n(no new map was stored; the agent may have updated an existing one)');
   }
-  process.exitCode = code ?? 1;
+  process.exitCode = code;
+}
+
+async function enrich(id) {
+  if (!id) throw new Error('Usage: waymark enrich <id> [--engine claude|codex]');
+  const r = root();
+  const doc = loadMap(r, id);
+  const code = await runAgent(r, enrichGuide(doc.id));
+  const gaps = narrativeGaps(loadMap(r, doc.id));
+  const html = path.join(mapDir(r), `${doc.id}.html`);
+  out(`\nwaymark: ${doc.id}  narrative ${gaps.complete ? 'complete' : 'still incomplete: ' + JSON.stringify(gaps)}\nhtml: ${html}`);
+  if (opt.open) openFile(html);
+  process.exitCode = code;
 }
 
 async function main() {
@@ -169,6 +194,17 @@ async function main() {
     }
     case 'generate':
       return generate(rest.join(' '));
+    case 'enrich':
+      return enrich(rest[0]);
+    case 'annotate': {
+      if (!rest[0] || !rest[1]) throw new Error('Usage: waymark annotate <id> <patch.json|->');
+      const raw = rest[1] === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(rest[1], 'utf8');
+      const res = annotateMap(root(), rest[0], JSON.parse(raw));
+      out(`✔ ${res.id}: ${res.changed} fields changed${res.unknown.length ? '; unknown: ' + res.unknown.join(', ') : ''}`);
+      if (!res.narrative.complete) out('  still missing: ' + JSON.stringify(res.narrative));
+      out('  html: ' + res.htmlPath);
+      return;
+    }
     case 'create': {
       if (!rest[0]) throw new Error('Usage: waymark create <file.json|->');
       const raw = rest[0] === '-' ? fs.readFileSync(0, 'utf8') : fs.readFileSync(rest[0], 'utf8');

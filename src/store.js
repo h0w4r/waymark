@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { normalizeMap } from './schema.js';
-import { anchorMap } from './anchor.js';
+import { anchorMap, safeJoin } from './anchor.js';
 import { headCommit, currentBranch, remoteWebUrl } from './git.js';
 import { renderHtml } from './render/html.js';
 
@@ -51,13 +51,90 @@ export function saveMap(root, input, { id, html = true } = {}) {
   fs.mkdirSync(mapDir(root), { recursive: true });
   fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));
   const htmlPath = html ? writeHtml(root, doc) : null;
-  return { doc, report, jsonPath: filePath(root, doc.id), htmlPath };
+  return { doc, report, narrative: narrativeGaps(doc), jsonPath: filePath(root, doc.id), htmlPath };
 }
 
 export function writeHtml(root, doc) {
   const p = filePath(root, doc.id, 'html');
-  fs.writeFileSync(p, renderHtml(doc));
+  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc) }));
   return p;
+}
+
+const MAX_FILE_BYTES = 512 * 1024;
+const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
+
+/** Snapshot of every referenced file, embedded in the viewer (code tabs, gutter markers). */
+export function collectFiles(root, doc) {
+  const files = {};
+  let total = 0;
+  const paths = [...new Set(doc.traces.flatMap((t) => t.locations.map((l) => l.path)))];
+  for (const rel of paths) {
+    try {
+      const abs = safeJoin(root, rel);
+      const st = fs.statSync(abs);
+      if (!st.isFile() || st.size > MAX_FILE_BYTES || total + st.size > MAX_TOTAL_BYTES) continue;
+      const text = fs.readFileSync(abs, 'utf8');
+      if (text.indexOf(String.fromCharCode(0)) !== -1) continue; // binary
+      files[rel] = text.split(String.fromCharCode(13, 10)).join(String.fromCharCode(10));
+      total += st.size;
+    } catch {
+      /* missing file: the viewer falls back to the stored snippet */
+    }
+  }
+  return files;
+}
+
+/** Which narrative fields are still empty (drives the "fill with waymark_annotate" hint). */
+export function narrativeGaps(doc) {
+  const gaps = { story: !doc.story, motivation: [], details: [], explanation: [] };
+  for (const t of doc.traces) {
+    if (!t.motivation) gaps.motivation.push(t.id);
+    if (!t.details) gaps.details.push(t.id);
+    for (const l of t.locations) if (!l.explanation) gaps.explanation.push(l.id);
+  }
+  gaps.complete = !gaps.story && !gaps.motivation.length && !gaps.details.length && !gaps.explanation.length;
+  return gaps;
+}
+
+/**
+ * Patches prose on an existing map without re-anchoring: story/description/title at map level,
+ * title/description/diagramTitle/motivation/details per trace, title/description/explanation per location.
+ */
+export function annotateMap(root, id, patch) {
+  const doc = loadMap(root, id);
+  const unknown = [];
+  let changed = 0;
+  const set = (obj, key, val) => {
+    if (typeof val === 'string' && obj[key] !== val) {
+      obj[key] = val;
+      changed++;
+    }
+  };
+  for (const k of ['title', 'description', 'story', 'language']) set(doc, k, patch[k]);
+  for (const tp of patch.traces || []) {
+    const t = doc.traces.find((x) => x.id === String(tp.id));
+    if (!t) {
+      unknown.push(`trace ${tp.id}`);
+      continue;
+    }
+    for (const k of ['title', 'description', 'diagramTitle', 'motivation', 'details']) set(t, k, tp[k]);
+  }
+  for (const lp of patch.locations || []) {
+    const l = doc.traces.flatMap((t) => t.locations).find((x) => x.id === lp.id);
+    if (!l) {
+      unknown.push(`location ${lp.id}`);
+      continue;
+    }
+    for (const k of ['title', 'description', 'explanation']) set(l, k, lp[k]);
+  }
+  for (const t of doc.traces) {
+    if (t.guide && !t.details) t.details = t.guide;
+    delete t.guide;
+  }
+  doc.meta = { ...doc.meta, updatedAt: new Date().toISOString() };
+  persist(root, doc);
+  const htmlPath = writeHtml(root, doc);
+  return { id: doc.id, changed, unknown, narrative: narrativeGaps(doc), htmlPath };
 }
 
 export function persist(root, doc) {

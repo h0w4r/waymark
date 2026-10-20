@@ -3,124 +3,136 @@
   "id": "waymark-create-flow",
   "title": "waymark_create: from tool call to shareable viewer",
   "description": "How an agent's waymark_create call becomes a verified JSON map and a self-contained HTML viewer, and how it is later reused as context. Key takeaway: every location is re-anchored against the working tree by its exact line text, so line numbers from the LLM are hints, not truth.",
+  "story": "An agent has just traced a flow through a codebase and wants to save it. It calls the `waymark_create` MCP tool [1a] with a title, some traces and a list of locations. Each location has a path, a line number it *believes* is correct, and the exact text of that line. Nothing in that payload is trusted. The handler resolves the repository root and passes the raw map to `saveMap` [1b][1d]. This is the only path that writes maps to disk.\n\n`saveMap` first runs `normalizeMap` [1e]. It parses the input with Zod, fills in missing ids (`1`, `1a`, `1b`…), builds a linear call tree when none was given, and rejects tree refs or cross-trace links that point to unknown nodes. Then the key step: `anchorMap` [1f] → [2a] checks every location against the files actually on disk. For each one, `anchorLocation` [2b] opens the file through a root-jailed cache [2g]. If the path has disappeared, it looks for a renamed file [2c]. It then tries, in order, the claimed line [2d], the same text on a different line [2e], and finally a partial or symbol match [2f]. The result is a status (`ok`, `moved`, `relocated`, `fuzzy`, `unresolved`, `missing`), a corrected line number, a code snippet and a file hash. **The LLM's line numbers are hints. The line text is the anchor.**\n\nOnce anchored, the document gets git metadata (commit, branch, remote) and is written as `.waymark/<id>.json` [1g], the canonical, committable artifact. A self-contained HTML viewer is written next to it [1h]. The server then sends `resourceListChanged` [1c] so clients can @-mention `waymark://<id>` immediately. The tool's reply includes the anchor report and tells the agent to fix and resubmit with the same id if anything is unhealthy.\n\nFrom there the map has three audiences (trace 3). Humans open the HTML viewer [3a] and click through nodes [3b]. Agents load it as markdown context through the `waymark://` resource [3c], rendered by `renderMarkdown` [3d]. CI and maintainers run `verifyMap` [3e], which reuses the same `anchorLocation` [2b] to catch drift: lines that moved, anchors that broke, files whose hash changed. One anchoring algorithm handles both creating a map and keeping it honest afterwards.",
   "query": "how does waymark_create work end to end?",
   "traces": [
     {
+      "id": "1",
       "title": "MCP entry and persistence",
       "description": "The MCP tool handler resolves the repo root, delegates to the store, and notifies clients that the resource list changed.",
+      "motivation": "An MCP tool call is untrusted input from an LLM. This trace makes sure there is **exactly one writer** (`saveMap`), so every map on disk has been normalized, anchored and stamped in the same way, whether it came from MCP, the CLI or a re-save. Keeping the MCP handler thin also lets the CLI (`waymark create map.json`) share the same behavior.",
+      "details": "The tool is registered with the flattened `MapInput` schema [1a], so the model sees a flat, documented argument list instead of a nested blob. The handler's only real work is resolving the root (explicit `root`, then `WAYMARK_ROOT`, then the client's root) and calling the store [1b].\n\nInside **saveMap** [1d] the order matters. Normalization [1e] comes first so the anchorer gets ids and clean POSIX paths. Anchoring [1f] runs next so the stored snippets and line numbers reflect the working tree. Only then is the JSON written [1g], followed by the HTML viewer rendered from that same document [1h]. When `id` is passed, the existing map's `createdAt` is kept, so an update does not look like a brand-new map.\n\nAfter the write, [1c] notifies MCP clients that the resource list changed, which makes `@waymark:waymark://<id>` usable straight away. The response returns the anchor report so a weak map is caught and resubmitted within the same agent turn.",
       "locations": [
         {
+          "id": "1a",
           "title": "Tool registration",
-          "description": "waymark_create is registered with the flattened MapInput shape plus optional id/root, so LLMs see a flat, documented schema.",
+          "description": "Registers waymark_create with a flat MapInput schema plus optional id/root.",
+          "explanation": "This is where the whole flow starts: the MCP server publishes `waymark_create` to the client. The input schema spreads `MapInput.shape` and adds `id` and `root`, so the model sees a flat list of documented arguments instead of a nested object. That makes well-formed calls more likely. The tool description tells the model up front that line numbers will be auto-corrected and that unresolved anchors must be fixed and resubmitted, which sets expectations for the reply. The handler is wrapped in `safe(...)`, so a validation error (for example a duplicate location id from [1e]) comes back as an `isError` tool result instead of crashing the server.",
           "path": "src/mcp.js",
-          "lineNumber": 96,
+          "lineNumber": 100,
           "lineContent": "'waymark_create',",
           "symbol": "waymark_create",
-          "id": "1a",
           "status": "ok",
-          "fileHash": "4b4a77fa736e",
+          "fileHash": "4e0358df1b7a",
           "snippet": {
-            "startLine": 93,
-            "code": "  );\n\n  server.registerTool(\n    'waymark_create',\n    {\n      title: 'Create or update a waymark',\n      description:\n        'Validates a waymark, verifies every location against the working tree (auto-correcting shifted line numbers), stores it under .waymark/ and writes a shareable HTML viewer. Pass `id` to overwrite an existing map. Returns an anchor report: fix any unresolved/missing locations and resubmit.',\n      inputSchema: {\n        ...MapInput.shape,\n        id: z.string().optional().describe('Existing waymark id to overwrite'),\n        root: rootArg,\n      },\n    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();"
+            "startLine": 97,
+            "code": "  );\n\n  server.registerTool(\n    'waymark_create',\n    {\n      title: 'Create or update a waymark',\n      description:\n        'Validates a waymark, verifies every location against the working tree (auto-correcting shifted line numbers), stores it under .waymark/ and writes a shareable HTML viewer. Pass `id` to overwrite an existing map. Returns an anchor report: fix any unresolved/missing locations and resubmit.',\n      inputSchema: {\n        ...MapInput.shape,\n        id: z.string().optional().describe('Existing waymark id to overwrite'),\n        root: rootArg,\n      },\n    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();"
           }
         },
         {
-          "title": "Delegate to store",
-          "description": "The handler passes the raw map to saveMap, which validates, anchors and persists it.",
-          "path": "src/mcp.js",
-          "lineNumber": 109,
-          "lineContent": "const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });",
           "id": "1b",
-          "status": "ok",
-          "fileHash": "4b4a77fa736e",
-          "snippet": {
-            "startLine": 106,
-            "code": "    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,\n        html: htmlPath,\n        json: jsonPath,\n        anchors: report,\n        next: report.healthy\n          ? 'All anchors verified. Share the HTML file or reference waymark://' + doc.id\n          : 'Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".',\n      });\n    }),\n  );\n"
-          }
-        },
-        {
-          "title": "Notify resource change",
-          "description": "Clients refresh the waymark:// resource list so the new map is @-mentionable right away.",
+          "title": "Delegate to store",
+          "description": "Handler resolves the root and hands the raw map to saveMap.",
+          "explanation": "The handler pulls `id` and `root` out of the arguments and treats everything else as the map. `rootOf` resolves the repository root from the explicit argument, then `WAYMARK_ROOT`, then the root the client announced. Getting this wrong would anchor against the wrong tree, which is why the waymark agent always passes `root`. All the real work is delegated to `saveMap` [1d], which returns the stored document, the anchor report and the file paths. The handler then builds the reply: the `waymark://` URI, file paths, the report, and a `next` hint that tells the agent to resubmit with the same `id` if the map is unhealthy.",
           "path": "src/mcp.js",
-          "lineNumber": 110,
-          "lineContent": "server.sendResourceListChanged();",
-          "id": "1c",
+          "lineNumber": 113,
+          "lineContent": "const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });",
           "status": "ok",
-          "fileHash": "4b4a77fa736e",
+          "fileHash": "4e0358df1b7a",
           "snippet": {
-            "startLine": 107,
-            "code": "    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      return text({\n        id: doc.id,\n        resource: `waymark://${doc.id}`,\n        html: htmlPath,\n        json: jsonPath,\n        anchors: report,\n        next: report.healthy\n          ? 'All anchors verified. Share the HTML file or reference waymark://' + doc.id\n          : 'Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".',\n      });\n    }),\n  );\n\n  server.registerTool("
+            "startLine": 110,
+            "code": "    },\n    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      const next = [];\n      if (!report.healthy) {\n        next.push('Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".');\n      }\n      if (!narrative.complete) {\n        next.push('Narrative is incomplete (see \"narrative\"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id=\"' + doc.id + '\").');\n      }\n      if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);\n      return text({ id: doc.id, resource: `waymark://${doc.id}`, html: htmlPath, json: jsonPath, anchors: report, narrative, next });\n    }),\n  );\n\n  const prose = () => z.string().optional();"
           }
         },
         {
+          "id": "1c",
+          "title": "Notify resource change",
+          "description": "Notifies MCP clients that the waymark:// resource list changed.",
+          "explanation": "Right after the map is written, the server sends `resourceListChanged`. Clients such as Claude Code then re-query the resource template's `list` callback [3c] and the new map appears in @-mention autocompletion straight away, with no server restart. Without this call, the map would exist on disk but clients would not see it until they refreshed on their own. Note that it fires even when the anchor report is unhealthy: the map is saved either way, and health is reported separately.",
+          "path": "src/mcp.js",
+          "lineNumber": 114,
+          "lineContent": "server.sendResourceListChanged();",
+          "status": "ok",
+          "fileHash": "4e0358df1b7a",
+          "snippet": {
+            "startLine": 111,
+            "code": "    safe(async ({ id, root, ...map }) => {\n      const r = rootOf(root);\n      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });\n      server.sendResourceListChanged();\n      const next = [];\n      if (!report.healthy) {\n        next.push('Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id=\"' + doc.id + '\".');\n      }\n      if (!narrative.complete) {\n        next.push('Narrative is incomplete (see \"narrative\"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id=\"' + doc.id + '\").');\n      }\n      if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);\n      return text({ id: doc.id, resource: `waymark://${doc.id}`, html: htmlPath, json: jsonPath, anchors: report, narrative, next });\n    }),\n  );\n\n  const prose = () => z.string().optional();\n  server.registerTool("
+          }
+        },
+        {
+          "id": "1d",
           "title": "saveMap",
-          "description": "Orchestrates normalize → anchor → write JSON → write HTML and stamps commit/branch/remote metadata.",
+          "description": "Single writer: normalize, anchor, stamp git metadata, write JSON and HTML.",
+          "explanation": "`saveMap` is the only function that turns input into a stored map, and both the MCP tool [1b] and the CLI use it. It runs normalization [1e] and anchoring [1f] in order, then builds the document. The id is either the caller's `id` (overwrite) or a slug of the title plus 3 random bytes, which keeps collisions unlikely without a registry. When overwriting, it loads the existing map just to keep its `createdAt`. It also stamps `commit`, `branch` and `remote` so later readers know which revision the anchors were taken from and the viewer can build remote links. The anchor counts go into `meta.anchors`, with the noisy `issues` list removed.",
           "path": "src/store.js",
           "lineNumber": 32,
           "lineContent": "export function saveMap(root, input, { id, html = true } = {}) {",
           "symbol": "saveMap",
-          "id": "1d",
           "status": "ok",
-          "fileHash": "5e4089da9400",
+          "fileHash": "29bc4924767b",
           "snippet": {
             "startLine": 29,
             "code": "}\n\n/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),\n      branch: currentBranch(root),"
           }
         },
         {
+          "id": "1e",
           "title": "Normalize",
-          "description": "Zod parse, auto-assign ids (1a, 1b…), default linear tree, and reject dangling tree/link refs.",
+          "description": "Zod-validates the input, assigns ids, defaults the tree, rejects dangling refs.",
+          "explanation": "`normalizeMap` parses the input with the Zod `MapInput` schema, then fills in what the LLM left out. Missing trace ids become `1`, `2`… and missing location ids become `1a`, `1b`…. Ids must match `[A-Za-z0-9_-]{1,16}` and be unique across the whole map. Paths are converted to POSIX form and stripped of a leading `./`, so Windows-style input anchors the same way. A legacy `guide` field is moved to `details`. If no `tree` is given, a linear chain is built (each step nested under the previous one). Finally, every tree ref and cross-trace link is checked, and a reference to an unknown location throws before anything touches the disk.",
           "path": "src/store.js",
           "lineNumber": 33,
           "lineContent": "const map = normalizeMap(input);",
-          "id": "1e",
           "status": "ok",
-          "fileHash": "5e4089da9400",
+          "fileHash": "29bc4924767b",
           "snippet": {
             "startLine": 30,
             "code": "\n/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),\n      branch: currentBranch(root),\n      remote: remoteWebUrl(root),"
           }
         },
         {
+          "id": "1f",
           "title": "Anchor",
-          "description": "Every location is verified against the files on disk; see trace 2.",
+          "description": "Verifies every location against the working tree; see trace 2.",
+          "explanation": "This single call links the store to the anchoring engine [2a]. It changes `map.traces[*].locations` in place, replacing each location with its anchored version (corrected line, real line text, snippet, file hash, status). It returns the health report that ends up in both the tool reply and `meta.anchors`. Because it runs before the JSON write [1g], the stored snippets always match the tree as it was at save time, never the LLM's guess. An unhealthy report does not stop the save: the map is still persisted so the agent can fix it under the same id.",
           "path": "src/store.js",
           "lineNumber": 34,
           "lineContent": "const report = anchorMap(root, map);",
-          "id": "1f",
           "status": "ok",
-          "fileHash": "5e4089da9400",
+          "fileHash": "29bc4924767b",
           "snippet": {
             "startLine": 31,
             "code": "/** Validates, anchors against the working tree, persists JSON (+ HTML viewer). */\nexport function saveMap(root, input, { id, html = true } = {}) {\n  const map = normalizeMap(input);\n  const report = anchorMap(root, map);\n  const existing = id ? loadMap(root, id, { quiet: true }) : null;\n  const now = new Date().toISOString();\n  const doc = {\n    schemaVersion: SCHEMA_VERSION,\n    id: id || `${slugify(map.title)}-${crypto.randomBytes(3).toString('hex')}`,\n    ...map,\n    meta: {\n      createdAt: existing?.meta?.createdAt || now,\n      updatedAt: now,\n      root,\n      commit: headCommit(root),\n      branch: currentBranch(root),\n      remote: remoteWebUrl(root),\n      anchors: { ...report, issues: undefined },"
           }
         },
         {
+          "id": "1g",
           "title": "Write JSON",
-          "description": "The canonical artifact: .waymark/<id>.json, meant to be committed and shared.",
+          "description": "Writes the canonical .waymark/<id>.json, meant to be committed.",
+          "explanation": "The `.waymark/` directory is created if needed and the full document is written as pretty-printed JSON. That file is the source of truth: the HTML viewer, the markdown resource and `verify` are all derived from it. Pretty-printing with 2-space indentation keeps git diffs readable when a map is re-anchored or annotated. Writing it before the HTML means that if rendering fails, the canonical data is already safe.",
           "path": "src/store.js",
           "lineNumber": 52,
           "lineContent": "fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));",
-          "id": "1g",
           "status": "ok",
-          "fileHash": "5e4089da9400",
+          "fileHash": "29bc4924767b",
           "snippet": {
             "startLine": 49,
-            "code": "    },\n  };\n  fs.mkdirSync(mapDir(root), { recursive: true });\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n  const htmlPath = html ? writeHtml(root, doc) : null;\n  return { doc, report, jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc));\n  return p;\n}\n\nexport function persist(root, doc) {\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n}\n"
+            "code": "    },\n  };\n  fs.mkdirSync(mapDir(root), { recursive: true });\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n  const htmlPath = html ? writeHtml(root, doc) : null;\n  return { doc, report, narrative: narrativeGaps(doc), jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc) }));\n  return p;\n}\n\nconst MAX_FILE_BYTES = 512 * 1024;\nconst MAX_TOTAL_BYTES = 8 * 1024 * 1024;\n\n/** Snapshot of every referenced file, embedded in the viewer (code tabs, gutter markers). */"
           }
         },
         {
+          "id": "1h",
           "title": "Write HTML",
-          "description": "Self-contained viewer rendered next to the JSON.",
+          "description": "Renders the self-contained HTML viewer next to the JSON.",
+          "explanation": "Unless `html: false` is passed, `writeHtml` renders the document with `renderHtml` [3a] and saves it as `.waymark/<id>.html`. The viewer is regenerated from the stored document on every save, annotate or `verify --fix`, so it never drifts from the JSON. The returned `htmlPath` goes back to the agent so it can hand the user a file to open or share.",
           "path": "src/store.js",
           "lineNumber": 53,
           "lineContent": "const htmlPath = html ? writeHtml(root, doc) : null;",
-          "id": "1h",
           "status": "ok",
-          "fileHash": "5e4089da9400",
+          "fileHash": "29bc4924767b",
           "snippet": {
             "startLine": 50,
-            "code": "  };\n  fs.mkdirSync(mapDir(root), { recursive: true });\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n  const htmlPath = html ? writeHtml(root, doc) : null;\n  return { doc, report, jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc));\n  return p;\n}\n\nexport function persist(root, doc) {\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n}\n\nexport function loadMap(root, id, { quiet = false } = {}) {"
+            "code": "  };\n  fs.mkdirSync(mapDir(root), { recursive: true });\n  fs.writeFileSync(filePath(root, doc.id), JSON.stringify(doc, null, 2));\n  const htmlPath = html ? writeHtml(root, doc) : null;\n  return { doc, report, narrative: narrativeGaps(doc), jsonPath: filePath(root, doc.id), htmlPath };\n}\n\nexport function writeHtml(root, doc) {\n  const p = filePath(root, doc.id, 'html');\n  fs.writeFileSync(p, renderHtml(doc, { files: collectFiles(root, doc) }));\n  return p;\n}\n\nconst MAX_FILE_BYTES = 512 * 1024;\nconst MAX_TOTAL_BYTES = 8 * 1024 * 1024;\n\n/** Snapshot of every referenced file, embedded in the viewer (code tabs, gutter markers). */\nexport function collectFiles(root, doc) {"
           }
         }
       ],
@@ -155,22 +167,24 @@
             }
           ]
         }
-      ],
-      "guide": "The tool [1a] is a thin adapter: it resolves the root and calls the store [1b]. **saveWaymark map** [1d] is the only writer: it normalizes [1e], anchors [1f], writes the JSON [1g] and the HTML [1h]. Finally [1c] tells MCP clients the resource list changed, which is what makes `@waymark:waymark://<id>` work immediately in Claude Code.",
-      "id": "1"
+      ]
     },
     {
+      "id": "2",
       "title": "Anchoring locations to real code",
       "description": "Each location carries the exact text of its line; the anchorer finds it again even when lines shift or files move.",
+      "motivation": "Code moves all the time, and LLMs get line numbers wrong. A map pinned to bare line numbers would rot within a commit or two. Anchoring on the **text** of a line, with a graded set of fallbacks, keeps maps accurate for longer and makes drift visible instead of silent.",
+      "details": "[2a] creates one `FileCache` for the whole map, so each file is read and hashed once however many locations point at it. It runs [2b] for every location and tallies the statuses into a health report. A map counts as `healthy` only if nothing is `unresolved` or `missing`.\n\n**File resolution:** every read goes through [2g], which refuses paths that escape the repo root. If the file no longer exists, [2c] searches git-tracked files for the same basename and breaks ties by the longest shared path suffix. If more than one candidate ties, it returns nothing rather than guessing.\n\n**Line resolution**, from cheapest to loosest: [2d] checks whether the claimed line holds the claimed text after whitespace normalization. [2e] looks for that exact text elsewhere in the file and takes the occurrence nearest the claimed line. [2f] accepts a substring match (for lines of at least 6 characters) or, failing that, a word-boundary match on `symbol`, and marks the result `fuzzy`. Whatever matches, the location comes back with a corrected `lineNumber`, the real `lineContent`, a snippet (3 lines before, 14 after) and a 12-character SHA-1 `fileHash` of the CRLF-normalized file. That hash is what [3e] later compares.",
       "locations": [
         {
+          "id": "2a",
           "title": "anchorMap",
-          "description": "Iterates all locations with a shared FileCache and accumulates a health report (ok/moved/fuzzy/relocated/unresolved/missing).",
+          "description": "Anchors all locations with one shared FileCache and builds a health report.",
+          "explanation": "`anchorMap` sets up a single `FileCache` for the whole map, so each file is read, split and hashed only once even if many locations point at it. It replaces each location with the result of [2b] and adds one to the matching status counter. Anything that isn't `ok` goes into `issues` with its note, which is what tells the agent exactly what to fix. `healthy` is defined narrowly as no `unresolved` and no `missing`: a `moved` or `fuzzy` location still counts as healthy but is reported for review.",
           "path": "src/anchor.js",
           "lineNumber": 155,
           "lineContent": "export function anchorMap(root, map) {",
           "symbol": "anchorMap",
-          "id": "2a",
           "status": "ok",
           "fileHash": "dfa36f28dad8",
           "snippet": {
@@ -179,13 +193,14 @@
           }
         },
         {
+          "id": "2b",
           "title": "anchorLocation",
-          "description": "Resolves one location and attaches a code snippet and file hash used later for drift detection.",
+          "description": "Resolves one location: file, line, status, snippet and file hash.",
+          "explanation": "This is the core of Waymark, and both creation [2a] and verification [3e] use it. It resolves the file first (with a rename fallback [2c]) and returns `missing` immediately if nothing is found. Then it compares whitespace-normalized text: the claimed line [2d], an exact match elsewhere [2e], then a partial or symbol match [2f]. The claimed line number is clamped into the file's range, so an out-of-range hint cannot crash it. The returned location carries the corrected `lineNumber`, the real `lineContent` (only if a match was found), a snippet from 3 lines before to 14 after, the file hash, and a note describing any correction. Pitfall: an empty `lineContent` counts as `ok` on any line, so locations must always include the line text.",
           "path": "src/anchor.js",
           "lineNumber": 80,
           "lineContent": "export function anchorLocation(cache, loc) {",
           "symbol": "anchorLocation",
-          "id": "2b",
           "status": "ok",
           "fileHash": "dfa36f28dad8",
           "snippet": {
@@ -194,12 +209,13 @@
           }
         },
         {
+          "id": "2c",
           "title": "Renamed file fallback",
-          "description": "If the path is gone, look up a tracked file with the same basename / longest path suffix.",
+          "description": "Finds a renamed or moved file by basename and longest path suffix.",
+          "explanation": "When the claimed path no longer exists, `findByBasename` searches the git-tracked files (loaded lazily, once per cache) for the same file name. A single hit is accepted. With several hits, it scores each by how many trailing path segments match the original and picks the best only if it shares more than the basename and is not tied. If git is unavailable or the result is ambiguous, it returns null and the location ends up `missing`. A successful match becomes `relocated` instead of `ok` or `moved`, so file moves are always reported.",
           "path": "src/anchor.js",
           "lineNumber": 85,
           "lineContent": "const alt = cache.findByBasename(relPath);",
-          "id": "2c",
           "status": "ok",
           "fileHash": "dfa36f28dad8",
           "snippet": {
@@ -208,12 +224,13 @@
           }
         },
         {
+          "id": "2d",
           "title": "Exact line match",
-          "description": "Fast path: the claimed line holds the claimed text (whitespace-normalized).",
+          "description": "Fast path: the claimed line holds the claimed text.",
+          "explanation": "Both sides go through `norm`, which trims and collapses whitespace, so re-indentation or CRLF vs LF line endings never break an anchor. If the claimed line matches, the location is `ok` and no correction is made. This is the common case right after the LLM has read the file. Note the `!wanted` short-circuit: a location without `lineContent` is accepted on whatever line it claims, with nothing actually checked.",
           "path": "src/anchor.js",
           "lineNumber": 101,
           "lineContent": "if (!wanted || norm(lines[idx0]) === wanted) {",
-          "id": "2d",
           "status": "ok",
           "fileHash": "dfa36f28dad8",
           "snippet": {
@@ -222,12 +239,13 @@
           }
         },
         {
+          "id": "2e",
           "title": "Moved line",
-          "description": "Same text elsewhere in the file: pick the occurrence nearest to the claimed line.",
+          "description": "Same text elsewhere in the file; picks the occurrence nearest the claimed line.",
+          "explanation": "If the claimed line doesn't match, every line in the file is compared exactly (after normalization). When there are several hits, as with a repeated `return null;`, `nearest` picks the one closest to the claimed line number, on the assumption that code drifts a little rather than jumping across the file. The location becomes `moved` and the note records the correction (`line X -> Y`). This is the case that keeps maps working after edits above the anchor shift every line down.",
           "path": "src/anchor.js",
           "lineNumber": 107,
           "lineContent": "if (exact.length) {",
-          "id": "2e",
           "status": "ok",
           "fileHash": "dfa36f28dad8",
           "snippet": {
@@ -236,12 +254,13 @@
           }
         },
         {
+          "id": "2f",
           "title": "Fuzzy fallback",
-          "description": "Partial text or symbol match; flagged so the agent double-checks it.",
+          "description": "Partial text or symbol match, flagged fuzzy for a manual check.",
+          "explanation": "The last resort before `unresolved`. First it looks for substring containment either way, limited to lines of at least 6 normalized characters so short tokens like `}` don't match everywhere. If that finds nothing and the location has a `symbol`, it tries a regex-escaped word-boundary match on the symbol. The nearest hit wins and the status is `fuzzy`, with a \"double-check\" note, because the anchor may now point at a similar but different line. If even this fails, the location stays `unresolved` at the clamped original line, so it still gets a snippet.",
           "path": "src/anchor.js",
           "lineNumber": 124,
           "lineContent": "status = 'fuzzy';",
-          "id": "2f",
           "status": "ok",
           "fileHash": "dfa36f28dad8",
           "snippet": {
@@ -250,13 +269,14 @@
           }
         },
         {
+          "id": "2g",
           "title": "safeJoin guard",
-          "description": "Paths are resolved inside the repo root only, so a map cannot read files outside it.",
+          "description": "Resolves repo-relative paths and refuses anything outside the root.",
+          "explanation": "Map paths come from an LLM, or from a shared JSON file, so they must not be able to read arbitrary files. `safeJoin` resolves the path against the root and checks the relative path back: anything starting with `..` or still absolute (for example another drive on Windows) throws. `FileCache.read` calls it inside a `try`, so an escaping path shows up as `missing` instead of an exception. The cache also skips files over 4 MB to avoid loading huge generated artifacts.",
           "path": "src/anchor.js",
           "lineNumber": 13,
           "lineContent": "export function safeJoin(root, rel) {",
           "symbol": "safeJoin",
-          "id": "2g",
           "status": "ok",
           "fileHash": "dfa36f28dad8",
           "snippet": {
@@ -301,81 +321,88 @@
             }
           ]
         }
-      ],
-      "guide": "[2a] drives [2b] for every node. File resolution goes through [2g] (root jail) and falls back to [2c] on renames. Line resolution tries the exact line [2d], then the same text elsewhere [2e], then a partial/symbol match [2f]. Anything else is reported as `unresolved`, and the agent is told to fix it and resubmit with the same id.",
-      "id": "2"
+      ]
     },
     {
+      "id": "3",
       "title": "Reuse: viewer, context and drift",
       "description": "The stored map is consumed by humans (HTML), by agents (markdown resource) and by CI (verify).",
+      "motivation": "A map is only worth something if people read it and it stays correct. This trace shows the three ways a stored map is consumed: a human-friendly viewer, agent-friendly context and a CI check. All three work from the same JSON document.",
+      "details": "For humans, [3a] packs the document, a clickable Mermaid diagram and a compact markdown copy into a single HTML file that can be shared without a server. Inside it, selecting a node [3b] shows that node's code with the anchor line highlighted, links to the editor and the remote, and the trace guide.\n\nFor agents, the `waymark://{id}` resource template [3c] lists every map (with id autocompletion) and, when read, returns [3d]'s markdown: header, text call tree and numbered snippets per location. That is exactly what an @-mention injects into context.\n\nFor maintenance, [3e] loads the stored map and re-runs [2b] on every location. It reports status changes, moved lines and files whose hash changed since the map was written. With `fix`, it writes the corrected anchors back and regenerates the HTML. `waymark verify --strict` turns that report into a CI failure.",
       "locations": [
         {
-          "title": "renderHtml",
-          "description": "Inlines the map, a clickable Mermaid diagram and a compact markdown copy into one HTML file.",
-          "path": "src/render/html.js",
-          "lineNumber": 12,
-          "lineContent": "export function renderHtml(doc) {",
-          "symbol": "renderHtml",
           "id": "3a",
-          "status": "ok",
-          "fileHash": "8e4ddeee116b",
-          "snippet": {
-            "startLine": 9,
-            "code": "  JSON.stringify(v).replace(/</g, '\\\\u003c').replace(/[\\u2028\\u2029]/g, ' ');\n\n/** Self-contained, shareable viewer. Only the Mermaid diagram tab needs network (CDN). */\nexport function renderHtml(doc) {\n  const data = {\n    doc,\n    mermaid: renderMermaid(doc, { clickable: true }),\n    markdown: renderMarkdown(doc, { detail: 'compact' }),\n  };\n  return `<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>Waymark · ${escHtml(doc.title)}</title>\n<style>${CSS}</style>\n</head>\n<body>"
-          }
-        },
-        {
-          "title": "Node selection",
-          "description": "Clicking a node shows its description, highlighted snippet, editor/remote links and the trace guide.",
+          "title": "renderHtml",
+          "description": "Inlines map, file snapshots, CSS and client into one HTML.",
+          "explanation": "This is where a stored map becomes something a human can open with a double-click. `renderHtml` receives the map plus a snapshot of every referenced file (collected by `collectFiles` in the store) and inlines four things into a single page: the CSS, the client script from `viewer.client.js`, the map JSON and those file contents. Nothing is fetched at view time, so the file works offline, from an email attachment or from a CI artifact, and it keeps showing the code *as it was* when the map was made. The only escaping that matters is in the JSON island: every `<` is neutralised so a snippet containing `</script>` cannot break out of the data block. Selection itself happens client-side in [3b].",
           "path": "src/render/html.js",
-          "lineNumber": 255,
-          "lineContent": "function select(id, { push = true } = {}) {",
-          "symbol": "select",
-          "id": "3b",
+          "lineNumber": 24,
+          "lineContent": "export function renderHtml(doc, { files = {} } = {}) {",
+          "symbol": "renderHtml",
           "status": "ok",
-          "fileHash": "8e4ddeee116b",
+          "fileHash": "37fc4f3366e8",
           "snippet": {
-            "startLine": 252,
-            "code": "\n// ---------- detail ----------\nlet current = null;\nfunction select(id, { push = true } = {}) {\n  const l = byId.get(id); if (!l) return;\n  current = id;\n  document.querySelectorAll('.node.sel').forEach((n) => n.classList.remove('sel'));\n  const node = document.querySelector('.node[data-id=\"' + id + '\"]');\n  if (node) { node.classList.add('sel'); node.closest('.trace').classList.remove('closed'); node.scrollIntoView({ block: 'nearest' }); }\n  const ext = (l.path.split('.').pop() || '').toLowerCase();\n  const code = l.snippet && l.snippet.code != null\n    ? '<pre class=\"code\">' + l.snippet.code.split('\\\\n').map((ln, i) => {\n        const no = l.snippet.startLine + i;\n        return '<span class=\"ln' + (no === l.lineNumber ? ' hl' : '') + '\"><span class=\"no\">' + no + '</span>' + hl(ln, ext) + '</span>';\n      }).join('') + '</pre>'\n    : '<pre class=\"code\"><span class=\"ln hl\"><span class=\"no\">' + l.lineNumber + '</span>' + esc(l.lineContent) + '</span></pre>';\n  const ed = editorUrl(l), rm = remoteUrl(l);\n  const idx = locs.findIndex((x) => x.id === id);"
+            "startLine": 21,
+            "code": " * explanations; code view with embedded files; interactive SVG diagram.\n * `files` is a snapshot { path: content } of the referenced files.\n */\nexport function renderHtml(doc, { files = {} } = {}) {\n  const data = {\n    doc,\n    files,\n    markdown: renderMarkdown(doc, { detail: 'full' }),\n    mermaid: renderMermaid({ ...doc, diagram: undefined }),\n  };\n  return `<!doctype html>\n<html lang=\"${escHtml(doc.language || 'en')}\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<meta name=\"generator\" content=\"waymark\">\n<title>Waymark · ${escHtml(doc.title)}</title>\n<style>${CSS}</style>"
           }
         },
         {
-          "title": "waymark:// resource",
-          "description": "Template resource listing every map; reading it returns markdown context for @-mentions.",
-          "path": "src/mcp.js",
-          "lineNumber": 202,
-          "lineContent": "server.registerResource(",
-          "id": "3c",
-          "status": "ok",
-          "fileHash": "4b4a77fa736e",
+          "id": "3b",
+          "title": "Node selection",
+          "description": "One primitive syncs map pane, code view and diagram.",
+          "explanation": "`select` is the single navigation primitive of the viewer: every interaction (clicking a card, a `[1a]` reference in a guide, a gutter marker, a diagram node, prev/next or the arrow keys) ends up here. It highlights the card in the map pane and opens its trace, then `showInCode` switches the file tab, highlights the anchor line and inserts the inline annotation with the one-line description, an Explain toggle and prev/next. If the diagram has been built it also focuses the node and its path (everything else dims) and, in diagram view, opens the detail card and pans to it. Finally it writes `#id` to the URL, which is what makes deep links like `waymark-create-flow.html#2e` shareable. Because all views go through this one function they can never disagree about what is selected.",
+          "path": "src/render/viewer.client.js",
+          "lineNumber": 767,
+          "lineContent": "function select(id, opts = {}) {",
+          "symbol": "select",
+          "status": "moved",
+          "fileHash": "1bc3f9f0cefb",
           "snippet": {
-            "startLine": 199,
+            "startLine": 764,
+            "code": "  $('#zsel').onclick = () => { const n = state.sel && dg && dg.primary.get(state.sel); if (n) centerOn(n); };\n\n  // ---------------------------------------------------------------- selection & views\n  function select(id, opts = {}) {\n    const l = byId.get(id);\n    if (!l) return;\n    state.sel = id;\n    $$('.loc.sel', mapPane).forEach((e) => e.classList.remove('sel'));\n    const card = $('.loc[data-id=\"' + id + '\"]:not(.ref-again)', mapPane);\n    if (card) {\n      card.classList.add('sel');\n      card.closest('.trace').classList.remove('closed');\n      if (opts.from !== 'map') card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });\n    }\n    showInCode(l);\n    if (dg) {\n      const n = focusDiagram(id);\n      if (state.view === 'diagram') {"
+          },
+          "note": "line 723 -> 767"
+        },
+        {
+          "id": "3c",
+          "title": "waymark:// resource",
+          "description": "waymark://{id} resource: lists maps and serves them as markdown.",
+          "explanation": "This resource template makes maps @-mentionable. Its `list` callback lists every stored map with title and description, and `complete` autocompletes ids by prefix. Reading `waymark://<id>` loads the JSON and returns `renderMarkdown` [3d] output as `text/markdown`. It re-reads `.waymark/` on each request, which is why the `resourceListChanged` signal from [1c] is enough to show new maps without server state. It always uses the default root (`rootOf()`), so it serves maps from the server's configured repository.",
+          "path": "src/mcp.js",
+          "lineNumber": 267,
+          "lineContent": "server.registerResource(",
+          "status": "ok",
+          "fileHash": "4e0358df1b7a",
+          "snippet": {
+            "startLine": 264,
             "code": "  );\n\n  // @-mentionable context: waymark://<id>\n  server.registerResource(\n    'waymark',\n    new ResourceTemplate('waymark://{id}', {\n      list: async () => ({\n        resources: listMaps(rootOf()).map((m) => ({\n          uri: `waymark://${m.id}`,\n          name: m.title,\n          description: m.description,\n          mimeType: 'text/markdown',\n        })),\n      }),\n      complete: { id: (v) => listMaps(rootOf()).map((m) => m.id).filter((i) => i.startsWith(v)) },\n    }),\n    { title: 'Waymark', description: 'A waymark rendered as markdown context', mimeType: 'text/markdown' },\n    async (uri, { id }) => ({"
           }
         },
         {
+          "id": "3d",
           "title": "renderMarkdown",
-          "description": "Agent-oriented rendering: text call tree, anchors and numbered snippets.",
+          "description": "Renders a map as agent-oriented markdown with tree and snippets.",
+          "explanation": "This is the text an agent actually reads when it loads a map. It writes a header with id, commit, branch, date and the original query. Then, for each trace, it writes the description, an ASCII call tree and one entry per location: title, `path:line`, symbol, description and, at `full` detail, a numbered snippet with the anchor line marked `>`. `compact` drops the snippets for a cheaper overview (used for the copy embedded in the HTML [3a]). The format is built for an LLM: node ids like [1a] match the tree, so the model can cross-reference quickly.",
           "path": "src/render/markdown.js",
-          "lineNumber": 28,
+          "lineNumber": 29,
           "lineContent": "export function renderMarkdown(doc, { detail = 'full', diagram = false } = {}) {",
           "symbol": "renderMarkdown",
-          "id": "3d",
           "status": "ok",
-          "fileHash": "a5bd22698abe",
+          "fileHash": "a668e9603f14",
           "snippet": {
-            "startLine": 25,
-            "code": " * Context-oriented rendering for agents (what an @-mention injects).\n * detail: \"full\" includes snippets; \"compact\" keeps only structure + anchors.\n */\nexport function renderMarkdown(doc, { detail = 'full', diagram = false } = {}) {\n  const o = [];\n  o.push(`# Waymark: ${doc.title}`);\n  o.push('');\n  o.push(doc.description);\n  const m = doc.meta || {};\n  o.push('');\n  o.push(\n    `_id: \\`${doc.id}\\`${m.commit ? ` · commit ${m.commit.slice(0, 8)}` : ''}${m.branch ? ` (${m.branch})` : ''}` +\n      `${m.updatedAt ? ` · updated ${m.updatedAt.slice(0, 10)}` : ''}${doc.query ? ` · query: \"${doc.query}\"` : ''}_`,\n  );\n\n  for (const trace of doc.traces) {\n    o.push('', `## Trace ${trace.id}: ${trace.title}`, '', trace.description, '', '```text', renderTextTree(trace), '```', '');\n    for (const loc of trace.locations) {"
+            "startLine": 26,
+            "code": " * detail: \"full\" includes the narrative (story, guides, explanations) and snippets;\n * \"compact\" keeps only structure, one-line descriptions and anchors.\n */\nexport function renderMarkdown(doc, { detail = 'full', diagram = false } = {}) {\n  const o = [];\n  o.push(`# Waymark: ${doc.title}`);\n  o.push('');\n  o.push(doc.description);\n  const m = doc.meta || {};\n  o.push('');\n  o.push(\n    `_id: \\`${doc.id}\\`${m.commit ? ` · commit ${m.commit.slice(0, 8)}` : ''}${m.branch ? ` (${m.branch})` : ''}` +\n      `${m.updatedAt ? ` · updated ${m.updatedAt.slice(0, 10)}` : ''}${doc.query ? ` · query: \"${doc.query}\"` : ''}_`,\n  );\n\n  const full = detail === 'full';\n  if (full && doc.story) o.push('', '## The story', '', doc.story);\n"
           }
         },
         {
+          "id": "3e",
           "title": "verifyMap",
-          "description": "Re-anchors a stored map against HEAD, reports moved/broken anchors and changed files, optionally fixing them.",
+          "description": "Re-anchors a stored map, reports drift, optionally writes fixes back.",
+          "explanation": "`verifyMap` loads a stored map and runs every location through the same `anchorLocation` [2b] used at creation, with a fresh `FileCache`. It records a change whenever the status is not `ok` or the line or path differs. Separately, it compares each stored `fileHash` with the current one to list files that changed even when the anchor line didn't move. The map is `stale` if either list is non-empty and `broken` counts unresolved plus missing. With `fix`, the corrected locations replace the old ones, `commit` and `verifiedAt` are updated, and both JSON and HTML are rewritten. Without `fix`, nothing on disk changes, which is what makes `waymark verify --strict` safe to run in CI.",
           "path": "src/verify.js",
           "lineNumber": 9,
           "lineContent": "export function verifyMap(root, id, { fix = false } = {}) {",
           "symbol": "verifyMap",
-          "id": "3e",
           "status": "ok",
           "fileHash": "214d66bfa2c2",
           "snippet": {
@@ -419,9 +446,7 @@
             }
           ]
         }
-      ],
-      "guide": "Humans open the HTML [3a] and navigate with [3b]. Agents load the map through the resource [3c], rendered by [3d]. `waymark verify --strict` runs [3e] in CI so maps don't silently rot.",
-      "id": "3"
+      ]
     }
   ],
   "links": [
@@ -447,19 +472,19 @@
   ],
   "meta": {
     "createdAt": "2026-10-01T16:36:38.822Z",
-    "updatedAt": "2026-10-01T16:36:38.822Z",
+    "updatedAt": "2026-10-20T01:44:35.102Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "d6095de439aebb062a042e242f93b649b363c140",
-    "branch": null,
-    "remote": null,
+    "commit": "92eefc332fc861c3d1deda83e2180271900b86ec",
+    "branch": "main",
+    "remote": "https://github.com/h0w4r/waymark",
     "anchors": {
-      "ok": 20,
-      "moved": 0,
+      "ok": 19,
+      "moved": 1,
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-01T17:52:11.346Z"
+    "verifiedAt": "2026-10-20T01:53:34.906Z"
   }
 }

@@ -2,47 +2,50 @@
   "schemaVersion": 1,
   "id": "verificacion-de-deriva-y-reanclaje-de-waymark-8c8a2e",
   "title": "Verificación de deriva y reanclaje de Waymark",
-  "description": "Recorrido de `waymark verify` y `waymark_verify` desde la selección de mapas hasta el cotejo de cada ubicación con el árbol de trabajo y la escritura opcional. La deriva se determina por cambios en anclas o hash de archivo; el reanclaje busca texto exacto, coincidencia parcial o un archivo trasladado.",
+  "description": "Explica cómo Waymark detecta deriva, reubica anclas y guarda correcciones opcionales.",
   "query": "How does waymark verify detect drift and re-anchor locations after code changes?",
   "traces": [
     {
       "id": "1",
       "title": "Entrada y diagnóstico de deriva",
-      "description": "La CLI y el MCP seleccionan uno o todos los mapas y delegan en verifyMap. Este carga el mapa guardado, comprueba cada ubicación y compone un informe de estado, cambios y archivos cuyo hash difiere.",
+      "description": "Selecciona mapas, verifica ubicaciones y resume deriva o anclas rotas.",
       "locations": [
         {
           "id": "1a",
           "title": "Entrada CLI verify",
-          "description": "La CLI elige el ID indicado o todos los mapas, y transmite la opción fix a verifyMap.",
+          "description": "La CLI selecciona mapas y pasa la opción `fix` a `verifyMap`.",
           "path": "src/cli.js",
-          "lineNumber": 195,
+          "lineNumber": 231,
           "lineContent": "const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);",
           "status": "moved",
-          "fileHash": "ab2abb013c03",
+          "fileHash": "0b9ef6b90b08",
           "snippet": {
-            "startLine": 192,
+            "startLine": 228,
             "code": "    }\n    case 'verify': {\n      const r = root();\n      const ids = rest[0] ? [rest[0]] : listMaps(r).map((m) => m.id);\n      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.broken || (opt.strict && v.stale && !v.fixed)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }\n    case 'render': {\n      const r = root();\n      const p = writeHtml(r, loadMap(r, rest[0]));"
           },
-          "note": "line 191 -> 195"
+          "note": "line 195 -> 231",
+          "explanation": "El comando `verify` toma el primer argumento como ID; si falta, `listMaps` aporta todos los IDs. Cada ID llega a `verifyMap` con `opt.fix`, de modo que la selección no altera la lógica de cotejo. Después, la CLI traduce el informe a una línea de estado y cambios visibles [3f]. Si se verifican varios mapas, acumula fallos para decidir una sola salida [3g]."
         },
         {
           "id": "1b",
           "title": "Entrada MCP verify",
-          "description": "La herramienta MCP aplica la misma selección y devuelve un informe por mapa.",
+          "description": "El MCP verifica un mapa o todos y devuelve sus informes.",
           "path": "src/mcp.js",
-          "lineNumber": 167,
+          "lineNumber": 232,
           "lineContent": "return text(ids.map((i) => verifyMap(r, i, { fix })));",
-          "status": "ok",
-          "fileHash": "4b4a77fa736e",
+          "status": "moved",
+          "fileHash": "4e0358df1b7a",
           "snippet": {
-            "startLine": 164,
+            "startLine": 229,
             "code": "    safe(async ({ id, fix, root }) => {\n      const r = rootOf(root);\n      const ids = id ? [id] : listMaps(r).map((m) => m.id);\n      return text(ids.map((i) => verifyMap(r, i, { fix })));\n    }),\n  );\n\n  server.registerTool(\n    'waymark_render',\n    {\n      title: 'Render waymark viewer',\n      description: 'Regenerates the self-contained HTML viewer of a waymark and optionally opens it in the default browser.',\n      inputSchema: { id: z.string(), open: z.boolean().optional(), root: rootArg },\n    },\n    safe(async ({ id, open, root }) => {\n      const r = rootOf(root);\n      const p = writeHtml(r, loadMap(r, id));\n      if (open) openFile(p);"
-          }
+          },
+          "note": "line 167 -> 232",
+          "explanation": "El controlador MCP resuelve primero la raíz indicada por el cliente y obtiene el ID solicitado o todos los IDs guardados. Invoca `verifyMap` para cada uno con el mismo valor `fix` que recibe la herramienta. Los objetos resultantes se devuelven mediante `text`, sin la presentación `OK`/`STALE`/`BROKEN` de la CLI. Por ello los consumidores MCP deben interpretar `stale`, `broken`, `counts` y `changes` del informe [1g]."
         },
         {
           "id": "1c",
           "title": "Carga del mapa",
-          "description": "verifyMap abre el JSON guardado y crea una caché de archivos para cotejar las ubicaciones.",
+          "description": "`verifyMap` carga el mapa y prepara caché, cambios y conteos.",
           "path": "src/verify.js",
           "lineNumber": 10,
           "lineContent": "const doc = loadMap(root, id);",
@@ -51,12 +54,13 @@
           "snippet": {
             "startLine": 7,
             "code": " * With fix=true, corrected line numbers/snippets are written back.\n */\nexport function verifyMap(root, id, { fix = false } = {}) {\n  const doc = loadMap(root, id);\n  const cache = new FileCache(root);\n  const changes = [];\n  const changedFiles = new Set();\n  const counts = { ok: 0, moved: 0, fuzzy: 0, relocated: 0, unresolved: 0, missing: 0 };\n\n  for (const trace of doc.traces) {\n    trace.locations = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      counts[r.status]++;\n      if (loc.fileHash && r.fileHash && loc.fileHash !== r.fileHash) changedFiles.add(r.path);\n      if (r.status !== 'ok' || r.lineNumber !== loc.lineNumber || r.path !== loc.path) {\n        changes.push({\n          id: loc.id,\n          status: r.status,"
-          }
+          },
+          "explanation": "`loadMap` lee el documento JSON persistido que contiene los trazos y sus ubicaciones. `verifyMap` crea una `FileCache` por ejecución, además de listas para cambios, archivos con hash distinto y estados contados. La misma caché alimenta todas las llamadas posteriores a `anchorLocation` [1d], evitando releer rutas repetidas. Si el ID no identifica un mapa guardado, la carga falla antes de inspeccionar código."
         },
         {
           "id": "1d",
           "title": "Comprueba cada ubicación",
-          "description": "Cada ubicación del mapa pasa a anchorLocation; sus resultados se cuentan por estado.",
+          "description": "Cada ubicación pasa por `anchorLocation` y suma un estado.",
           "path": "src/verify.js",
           "lineNumber": 18,
           "lineContent": "const r = anchorLocation(cache, loc);",
@@ -65,12 +69,13 @@
           "snippet": {
             "startLine": 15,
             "code": "\n  for (const trace of doc.traces) {\n    trace.locations = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      counts[r.status]++;\n      if (loc.fileHash && r.fileHash && loc.fileHash !== r.fileHash) changedFiles.add(r.path);\n      if (r.status !== 'ok' || r.lineNumber !== loc.lineNumber || r.path !== loc.path) {\n        changes.push({\n          id: loc.id,\n          status: r.status,\n          from: `${loc.path}:${loc.lineNumber}`,\n          to: `${r.path}:${r.lineNumber}`,\n          note: r.note,\n        });\n      }\n      return fix ? r : loc;\n    });\n  }"
-          }
+          },
+          "explanation": "`verifyMap` recorre `doc.traces` y transforma cada `trace.locations` con `map`. Para cada `loc`, `anchorLocation` contrasta el ancla guardada con el archivo de trabajo y devuelve un resultado `r` [2i]. Ese estado incrementa `counts`, que después determina `broken` y queda en el informe [1g]. La transformación devuelve la ubicación original sin `fix`, o el resultado calculado con `fix` [3a]."
         },
         {
           "id": "1e",
           "title": "Detecta hash cambiado",
-          "description": "Compara el hash almacenado con el hash actual del archivo y añade la ruta a changedFiles cuando difieren.",
+          "description": "Un hash diferente registra el archivo en `changedFiles`.",
           "path": "src/verify.js",
           "lineNumber": 20,
           "lineContent": "if (loc.fileHash && r.fileHash && loc.fileHash !== r.fileHash) changedFiles.add(r.path);",
@@ -79,12 +84,13 @@
           "snippet": {
             "startLine": 17,
             "code": "    trace.locations = trace.locations.map((loc) => {\n      const r = anchorLocation(cache, loc);\n      counts[r.status]++;\n      if (loc.fileHash && r.fileHash && loc.fileHash !== r.fileHash) changedFiles.add(r.path);\n      if (r.status !== 'ok' || r.lineNumber !== loc.lineNumber || r.path !== loc.path) {\n        changes.push({\n          id: loc.id,\n          status: r.status,\n          from: `${loc.path}:${loc.lineNumber}`,\n          to: `${r.path}:${r.lineNumber}`,\n          note: r.note,\n        });\n      }\n      return fix ? r : loc;\n    });\n  }\n\n  const broken = counts.unresolved + counts.missing;"
-          }
+          },
+          "explanation": "La ubicación conserva `loc.fileHash` y el nuevo anclaje devuelve `r.fileHash` del archivo leído [2a]. Si ambos existen y difieren, se añade `r.path` a un `Set`, por lo que una ruta aparece una sola vez aunque tenga varias ubicaciones. Ese conjunto contribuye a `stale` [1g] incluso cuando el texto de todas las líneas ancladas aún coincide. Al faltar cualquiera de los hashes, esta comparación no registra cambio."
         },
         {
           "id": "1f",
           "title": "Registra cambios de ubicación",
-          "description": "Guarda origen, destino, estado y nota cuando cambia el ancla o su estado deja de ser ok.",
+          "description": "Registra estado, origen y destino cuando cambia una ubicación.",
           "path": "src/verify.js",
           "lineNumber": 21,
           "lineContent": "if (r.status !== 'ok' || r.lineNumber !== loc.lineNumber || r.path !== loc.path) {",
@@ -93,12 +99,13 @@
           "snippet": {
             "startLine": 18,
             "code": "      const r = anchorLocation(cache, loc);\n      counts[r.status]++;\n      if (loc.fileHash && r.fileHash && loc.fileHash !== r.fileHash) changedFiles.add(r.path);\n      if (r.status !== 'ok' || r.lineNumber !== loc.lineNumber || r.path !== loc.path) {\n        changes.push({\n          id: loc.id,\n          status: r.status,\n          from: `${loc.path}:${loc.lineNumber}`,\n          to: `${r.path}:${r.lineNumber}`,\n          note: r.note,\n        });\n      }\n      return fix ? r : loc;\n    });\n  }\n\n  const broken = counts.unresolved + counts.missing;\n  const result = {"
-          }
+          },
+          "explanation": "Después del reanclaje [1d], `verifyMap` compara estado, línea y ruta con la ubicación almacenada. Si algo difiere, añade a `changes` el ID, estado, origen, destino y nota que produjo `anchorLocation`. Esos cambios alimentan `stale` [1g] y las líneas de detalle de la CLI [3f]. Un `fuzzy` se registra aunque conserve ruta y línea, porque su estado ya no es `ok` [2g]."
         },
         {
           "id": "1g",
           "title": "Calcula estado global",
-          "description": "El mapa queda stale si hay cambios de ubicación o de hash; broken cuenta únicamente unresolved y missing.",
+          "description": "`stale` marca deriva y `broken` cuenta anclas sin resolver.",
           "path": "src/verify.js",
           "lineNumber": 43,
           "lineContent": "stale: changes.length > 0 || changedFiles.size > 0,",
@@ -107,7 +114,8 @@
           "snippet": {
             "startLine": 40,
             "code": "    counts,\n    changedFiles: [...changedFiles],\n    changes,\n    stale: changes.length > 0 || changedFiles.size > 0,\n    broken,\n    fixed: false,\n  };\n  if (fix && (changes.length || changedFiles.size)) {\n    doc.meta = { ...doc.meta, verifiedAt: new Date().toISOString(), commit: headCommit(root), anchors: { ...counts } };\n    persist(root, doc);\n    writeHtml(root, doc);\n    result.fixed = true;\n  }\n  return result;\n}\n"
-          }
+          },
+          "explanation": "El informe considera `broken` la suma de ubicaciones `unresolved` y `missing`, contadas durante el recorrido [1d]. Considera `stale` cualquier entrada en `changes` [1f] o cualquier archivo con hash diferente [1e]. Así, `moved`, `relocated` y `fuzzy` pueden señalar deriva sin sumar a `broken`; `fuzzy` sigue requiriendo juicio humano [2g]. La CLI prioriza `BROKEN` al mostrar el resultado [3f]."
         }
       ],
       "tree": [
@@ -142,17 +150,18 @@
           ]
         }
       ],
-      "guide": "La CLI [1a] y el MCP [1b] permiten verificar un mapa o todos. `verifyMap` carga el documento [1c] y reevalúa cada ubicación [1d]. El hash de archivo [1e] y la lista de anclas alteradas [1f] alimentan `stale` [1g]; `broken` se limita a ubicaciones sin resolver o sin archivo."
+      "motivation": "Los mapas son fotografías de ubicaciones del código; antes de usarlos, Waymark necesita saber si esas referencias todavía apuntan al mismo lugar. Esta etapa concentra las dos entradas públicas y produce un diagnóstico común, para que CLI y MCP apliquen las mismas reglas de verificación.",
+      "details": "La CLI toma un ID o enumera todos los mapas [1a]; el MCP hace la misma selección y devuelve los informes como texto estructurado [1b]. `verifyMap` carga el JSON persistido y crea una `FileCache` compartida [1c], luego envía cada ubicación a `anchorLocation` y cuenta sus estados [1d]. Para cada ubicación compara el hash guardado con el actual [1e] y registra movimientos, cambios de ruta o estados distintos de `ok` [1f]. `stale` se activa por cambios de ancla o de hash, mientras `broken` suma solo `unresolved` y `missing` [1g]; por eso un archivo puede estar cambiado aunque todas sus líneas ancladas sigan coincidiendo."
     },
     {
       "id": "2",
       "title": "Búsqueda y clasificación del ancla",
-      "description": "anchorLocation lee el archivo actual; si desapareció, busca una ruta alternativa entre archivos Git rastreados. Después intenta la línea original, texto exacto cercano, coincidencia parcial o símbolo, y devuelve estado, ruta, número de línea y fragmento actualizado.",
+      "description": "Busca cada ancla en el código actual y clasifica el resultado.",
       "locations": [
         {
           "id": "2a",
           "title": "Lee archivo actual",
-          "description": "FileCache lee el archivo como UTF-8, lo divide en líneas y calcula SHA-1 abreviado; limita archivos a 4 MiB.",
+          "description": "`FileCache` lee UTF-8, divide líneas y calcula un hash normalizado.",
           "path": "src/anchor.js",
           "lineNumber": 36,
           "lineContent": "const text = fs.readFileSync(abs, 'utf8');",
@@ -161,12 +170,13 @@
           "snippet": {
             "startLine": 33,
             "code": "      const abs = safeJoin(this.root, rel);\n      const stat = fs.statSync(abs);\n      if (stat.isFile() && stat.size <= MAX_FILE_BYTES) {\n        const text = fs.readFileSync(abs, 'utf8');\n        entry = {\n          lines: text.split(/\\r?\\n/),\n          hash: crypto.createHash('sha1').update(text.replace(/\\r\\n/g, '\\n')).digest('hex').slice(0, 12),\n        };\n      }\n    } catch {\n      entry = null;\n    }\n    this.files.set(rel, entry);\n    return entry;\n  }\n\n  /** Finds a moved/renamed file by basename when the original path is gone. */\n  findByBasename(rel) {"
-          }
+          },
+          "explanation": "`cache.read` resuelve la ruta bajo la raíz mediante `safeJoin` y acepta solo archivos de hasta 4 MiB. Lee UTF-8, separa líneas y calcula SHA-1 abreviado tras normalizar CRLF a LF; guarda el resultado para futuras ubicaciones del mismo archivo. `anchorLocation` consume esas líneas para buscar texto [2d] y devuelve el hash a la comparación global [1e]. Un archivo grande, ilegible o fuera de la raíz produce una entrada nula y puede terminar como `missing` [2c]."
         },
         {
           "id": "2b",
           "title": "Busca archivo trasladado",
-          "description": "Si falta la ruta original, busca una alternativa por nombre base entre archivos seguidos por Git y usa la ruta hallada.",
+          "description": "Si falla la ruta, busca entre archivos Git con igual nombre base.",
           "path": "src/anchor.js",
           "lineNumber": 85,
           "lineContent": "const alt = cache.findByBasename(relPath);",
@@ -175,12 +185,13 @@
           "snippet": {
             "startLine": 82,
             "code": "  let file = cache.read(relPath);\n  let relocatedFrom = null;\n  if (!file) {\n    const alt = cache.findByBasename(relPath);\n    if (alt && (file = cache.read(alt))) {\n      relocatedFrom = relPath;\n      relPath = alt;\n    }\n  }\n  if (!file) {\n    return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };\n  }\n\n  const { lines } = file;\n  const wanted = norm(loc.lineContent);\n  const idx0 = Math.min(Math.max(loc.lineNumber - 1, 0), lines.length - 1);\n  let idx = -1;\n  let status = 'unresolved';"
-          }
+          },
+          "explanation": "`anchorLocation` recurre a `findByBasename` únicamente cuando `cache.read` no pudo leer la ruta original [2a]. La búsqueda usa archivos rastreados por Git; admite un único nombre base o un candidato distinguible por sufijo de ruta, y luego intenta leerlo. Si lo logra, conserva la ruta antigua en `relocatedFrom` y continúa buscando el texto dentro de la alternativa [2d]. Un cambio de nombre base o candidatos ambiguos pueden impedir la recuperación y desembocar en `missing` [2c]."
         },
         {
           "id": "2c",
           "title": "Marca archivo ausente",
-          "description": "Cuando ninguna ruta puede leerse, devuelve missing sin intentar buscar líneas.",
+          "description": "Sin archivo legible, devuelve `missing` antes de buscar texto.",
           "path": "src/anchor.js",
           "lineNumber": 92,
           "lineContent": "return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };",
@@ -189,12 +200,13 @@
           "snippet": {
             "startLine": 89,
             "code": "    }\n  }\n  if (!file) {\n    return { ...loc, status: 'missing', note: `File not found: ${loc.path}` };\n  }\n\n  const { lines } = file;\n  const wanted = norm(loc.lineContent);\n  const idx0 = Math.min(Math.max(loc.lineNumber - 1, 0), lines.length - 1);\n  let idx = -1;\n  let status = 'unresolved';\n\n  if (!wanted || norm(lines[idx0]) === wanted) {\n    idx = idx0;\n    status = 'ok';\n  } else {\n    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));"
-          }
+          },
+          "explanation": "Si fallan tanto la ruta original como la alternativa [2b], `anchorLocation` retorna una copia de `loc` con estado `missing` y una nota. No calcula un hash nuevo ni examina líneas, porque no hay contenido que comparar. `verifyMap` cuenta este estado como ancla rota [1g] y lo incluye en `changes` [1f]. La causa puede ser ausencia real, tamaño superior al límite o error de lectura [2a]."
         },
         {
           "id": "2d",
           "title": "Comprueba línea original",
-          "description": "Normaliza espacios y compara el texto esperado con la línea guardada; si coincide, el estado es ok.",
+          "description": "Compara primero el texto normalizado en la línea anterior.",
           "path": "src/anchor.js",
           "lineNumber": 101,
           "lineContent": "if (!wanted || norm(lines[idx0]) === wanted) {",
@@ -203,12 +215,13 @@
           "snippet": {
             "startLine": 98,
             "code": "  let idx = -1;\n  let status = 'unresolved';\n\n  if (!wanted || norm(lines[idx0]) === wanted) {\n    idx = idx0;\n    status = 'ok';\n  } else {\n    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));\n    if (exact.length) {\n      idx = nearest(exact, idx0);\n      status = 'moved';\n    } else {\n      const partial = [];\n      if (wanted.length >= 6) {\n        lines.forEach((l, i) => {\n          const n = norm(l);\n          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);"
-          }
+          },
+          "explanation": "Con el archivo abierto, `anchorLocation` normaliza `loc.lineContent` y acota `loc.lineNumber` al rango de líneas actual. Si la línea indicada coincide tras colapsar espacios, marca `ok` y evita búsquedas más costosas. Si `lineContent` está vacío también acepta esa posición, una limitación importante porque falta evidencia textual. Cuando no coincide, busca la misma línea en otra posición [2e]."
         },
         {
           "id": "2e",
           "title": "Busca texto exacto",
-          "description": "Si la línea cambió, encuentra todas las coincidencias exactas normalizadas y elige la más cercana a la posición anterior; el estado es moved.",
+          "description": "Busca el texto exacto normalizado más cercano y marca `moved`.",
           "path": "src/anchor.js",
           "lineNumber": 108,
           "lineContent": "idx = nearest(exact, idx0);",
@@ -217,12 +230,13 @@
           "snippet": {
             "startLine": 105,
             "code": "    const exact = [];\n    lines.forEach((l, i) => norm(l) === wanted && exact.push(i));\n    if (exact.length) {\n      idx = nearest(exact, idx0);\n      status = 'moved';\n    } else {\n      const partial = [];\n      if (wanted.length >= 6) {\n        lines.forEach((l, i) => {\n          const n = norm(l);\n          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);\n        });\n      }\n      if (!partial.length && loc.symbol) {\n        const re = new RegExp(`\\\\b${loc.symbol.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\\b`);\n        lines.forEach((l, i) => re.test(l) && partial.push(i));\n      }\n      if (partial.length) {"
-          }
+          },
+          "explanation": "Si la línea anterior ya no coincide [2d], la función reúne todas las líneas cuyo texto normalizado iguala `wanted`. `nearest` elige la más cercana al índice guardado y clasifica el resultado como `moved`. La proximidad reduce ambigüedad cuando el mismo texto aparece varias veces, pero no prueba que sea la misma instrucción lógica. Si no hay igualdad exacta, el proceso pasa a la búsqueda aproximada [2f]."
         },
         {
           "id": "2f",
           "title": "Busca coincidencia parcial",
-          "description": "Sin texto exacto, busca inclusión parcial de al menos seis caracteres y, si no aparece, recurre al símbolo escapado como expresión regular.",
+          "description": "Sin texto exacto, prueba inclusión parcial y luego el símbolo.",
           "path": "src/anchor.js",
           "lineNumber": 118,
           "lineContent": "if (!partial.length && loc.symbol) {",
@@ -231,12 +245,13 @@
           "snippet": {
             "startLine": 115,
             "code": "          if (n.length >= 6 && (n.includes(wanted) || wanted.includes(n))) partial.push(i);\n        });\n      }\n      if (!partial.length && loc.symbol) {\n        const re = new RegExp(`\\\\b${loc.symbol.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\\b`);\n        lines.forEach((l, i) => re.test(l) && partial.push(i));\n      }\n      if (partial.length) {\n        idx = nearest(partial, idx0);\n        status = 'fuzzy';\n      }\n    }\n  }\n  if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';\n\n  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);"
-          }
+          },
+          "explanation": "Cuando falla la búsqueda exacta [2e], solo textos esperados de al menos seis caracteres participan en la prueba de inclusión. Si no aparecen candidatos y `loc.symbol` existe, se escapa el símbolo y se busca como palabra mediante expresión regular. Los índices encontrados se entregan a la selección aproximada [2g], no se tratan como coincidencias exactas. Un símbolo frecuente o un fragmento corto puede dejar candidatos ambiguos o ninguno."
         },
         {
           "id": "2g",
           "title": "Clasifica coincidencia aproximada",
-          "description": "Selecciona el candidato parcial más próximo y marca fuzzy, que requiere revisión humana.",
+          "description": "La coincidencia aproximada más cercana recibe estado `fuzzy`.",
           "path": "src/anchor.js",
           "lineNumber": 124,
           "lineContent": "status = 'fuzzy';",
@@ -245,12 +260,13 @@
           "snippet": {
             "startLine": 121,
             "code": "      }\n      if (partial.length) {\n        idx = nearest(partial, idx0);\n        status = 'fuzzy';\n      }\n    }\n  }\n  if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';\n\n  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);\n  const result = {\n    ...loc,\n    path: relPath,\n    lineNumber: anchorIdx + 1,\n    status,\n    fileHash: file.hash,"
-          }
+          },
+          "explanation": "La lista de candidatos parciales o por símbolo [2f] se reduce al índice más cercano a la línea anterior. El estado `fuzzy` distingue esta pista de una igualdad textual y genera una nota para comprobarla. `verifyMap` registra el estado como cambio [1f], pero no lo suma a `broken` [1g]. Antes de aceptar `fix`, conviene revisar el fragmento devuelto [2i], porque la cercanía no garantiza la misma función."
         },
         {
           "id": "2h",
           "title": "Marca archivo reubicado",
-          "description": "Cuando el archivo se trasladó y el texto dio ok o moved, el estado pasa a relocated.",
+          "description": "Una ruta alternativa con coincidencia segura se clasifica `relocated`.",
           "path": "src/anchor.js",
           "lineNumber": 128,
           "lineContent": "if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';",
@@ -259,12 +275,13 @@
           "snippet": {
             "startLine": 125,
             "code": "      }\n    }\n  }\n  if (relocatedFrom && (status === 'ok' || status === 'moved')) status = 'relocated';\n\n  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);\n  const result = {\n    ...loc,\n    path: relPath,\n    lineNumber: anchorIdx + 1,\n    status,\n    fileHash: file.hash,\n    snippet: { startLine: start + 1, code: lines.slice(start, end).join('\\n') },\n  };\n  if (idx >= 0) result.lineContent = lines[anchorIdx].trim();\n  const notes = [];"
-          }
+          },
+          "explanation": "Cuando se usó una ruta alternativa [2b] y la búsqueda terminó en `ok` o `moved`, el estado pasa a `relocated`. Así el informe expresa el cambio de archivo aunque el texto permanezca idéntico. Una coincidencia `fuzzy` en un archivo trasladado mantiene su estado aproximado y conserva una nota sobre la ruta antigua [2i]. Si se aplica `fix`, la nueva ruta pasa al mapa persistido [3a] [3d]."
         },
         {
           "id": "2i",
           "title": "Devuelve ancla actualizada",
-          "description": "El resultado incorpora ruta, línea, estado, hash y un fragmento contextual; si encontró coincidencia, actualiza lineContent.",
+          "description": "Devuelve ruta, línea, estado, hash, fragmento y notas del ancla.",
           "path": "src/anchor.js",
           "lineNumber": 133,
           "lineContent": "const result = {",
@@ -273,7 +290,8 @@
           "snippet": {
             "startLine": 130,
             "code": "  const anchorIdx = idx >= 0 ? idx : idx0;\n  const start = Math.max(0, anchorIdx - SNIPPET_BEFORE);\n  const end = Math.min(lines.length, anchorIdx + SNIPPET_AFTER + 1);\n  const result = {\n    ...loc,\n    path: relPath,\n    lineNumber: anchorIdx + 1,\n    status,\n    fileHash: file.hash,\n    snippet: { startLine: start + 1, code: lines.slice(start, end).join('\\n') },\n  };\n  if (idx >= 0) result.lineContent = lines[anchorIdx].trim();\n  const notes = [];\n  if (relocatedFrom) notes.push(`file moved from ${relocatedFrom}`);\n  if (status !== 'ok' && status !== 'unresolved' && loc.lineNumber !== anchorIdx + 1) {\n    notes.push(`line ${loc.lineNumber} -> ${anchorIdx + 1}`);\n  }\n  if (status === 'fuzzy') notes.push('partial text match; double-check');"
-          }
+          },
+          "explanation": "`anchorLocation` construye el resultado a partir de `loc`, sustituyendo ruta, línea, estado, hash y un fragmento alrededor del candidato. Solo actualiza `lineContent` cuando encontró una posición; si quedó `unresolved`, usa la línea previa acotada para mostrar contexto sin fingir coincidencia. Las notas explican traslado, desplazamiento, coincidencia parcial o texto ausente, y viajan a `changes` [1f]. Con `fix`, ese resultado se convierte en la ubicación guardada [3a]."
         }
       ],
       "tree": [
@@ -315,17 +333,18 @@
           ]
         }
       ],
-      "guide": "`FileCache` lee el código actual [2a]. Si la ruta ya no sirve, prueba una ruta Git por nombre base [2b]; si falla, devuelve `missing` [2c]. La comparación empieza en la línea previa [2d], luego busca texto exacto cercano [2e] y después coincidencia parcial o símbolo [2f] [2g]. Un traslado confirmado se clasifica como `relocated` [2h] y se devuelve el ancla con contexto [2i]."
+      "motivation": "Un número de línea aislado envejece en cuanto alguien inserta o mueve código. Esta etapa busca evidencia textual en el archivo actual y distingue coincidencias seguras de aproximaciones que deben inspeccionarse.",
+      "details": "`FileCache` lee el archivo dentro del repositorio, reutiliza la lectura y calcula un hash normalizado [2a]. Si no puede leer la ruta original, intenta localizar un archivo Git con el mismo nombre base [2b]; sin archivo legible devuelve `missing` [2c]. Con el archivo disponible, `anchorLocation` compara primero la línea anterior tras normalizar espacios [2d], luego el texto exacto más cercano [2e]. Si no hay coincidencia exacta, prueba inclusión parcial y después el símbolo [2f], clasificando el resultado como `fuzzy` [2g]. Una ruta alternativa con coincidencia `ok` o `moved` se marca `relocated` [2h]; al final devuelve ruta, línea, estado, hash, fragmento y notas para el diagnóstico o la corrección [2i]."
     },
     {
       "id": "3",
       "title": "Corrección, escritura y salida",
-      "description": "La opción fix reemplaza las ubicaciones en memoria por los resultados de reanclaje y, si detectó cambios, persiste el mapa y regenera HTML. La CLI muestra OK, STALE o BROKEN y decide su código de salida según broken y strict.",
+      "description": "Aplica correcciones opcionales, actualiza archivos y comunica el resultado.",
       "locations": [
         {
           "id": "3a",
           "title": "Aplica resultados con fix",
-          "description": "Cada ubicación original se reemplaza por la calculada solo cuando fix está activo.",
+          "description": "`fix` decide si reemplaza cada ubicación por el ancla calculada.",
           "path": "src/verify.js",
           "lineNumber": 30,
           "lineContent": "return fix ? r : loc;",
@@ -334,12 +353,13 @@
           "snippet": {
             "startLine": 27,
             "code": "          note: r.note,\n        });\n      }\n      return fix ? r : loc;\n    });\n  }\n\n  const broken = counts.unresolved + counts.missing;\n  const result = {\n    id: doc.id,\n    title: doc.title,\n    mapCommit: doc.meta?.commit?.slice(0, 8) || null,\n    headCommit: headCommit(root)?.slice(0, 8) || null,\n    counts,\n    changedFiles: [...changedFiles],\n    changes,\n    stale: changes.length > 0 || changedFiles.size > 0,\n    broken,"
-          }
+          },
+          "explanation": "La función de mapeo de `verifyMap` ya tiene el resultado actual `r` de `anchorLocation` [1d]. Con `fix`, devuelve `r` y deja las ubicaciones corregidas en el documento en memoria; sin él, conserva `loc`. Esta separación permite inspeccionar `counts`, `changes` y `stale` sin persistir nuevos anclajes. El reemplazo en memoria no basta para escribir archivos: también debe cumplirse la condición de [3b]."
         },
         {
           "id": "3b",
           "title": "Guarda solo con cambios",
-          "description": "El bloque de escritura se ejecuta únicamente si fix está activo y hubo cambios de ubicación o de hash.",
+          "description": "Con `fix` y deriva, persiste el mapa y su visor.",
           "path": "src/verify.js",
           "lineNumber": 47,
           "lineContent": "if (fix && (changes.length || changedFiles.size)) {",
@@ -348,12 +368,13 @@
           "snippet": {
             "startLine": 44,
             "code": "    broken,\n    fixed: false,\n  };\n  if (fix && (changes.length || changedFiles.size)) {\n    doc.meta = { ...doc.meta, verifiedAt: new Date().toISOString(), commit: headCommit(root), anchors: { ...counts } };\n    persist(root, doc);\n    writeHtml(root, doc);\n    result.fixed = true;\n  }\n  return result;\n}\n"
-          }
+          },
+          "explanation": "El bloque de escritura requiere `fix` y al menos un cambio de ubicación o de hash [1e] [1f]. Esto evita reescribir el mapa cuando la verificación no detectó diferencias. Si entra, actualiza metadatos [3c], guarda JSON [3d], regenera HTML [3e] y marca `fixed: true`. Esa marca indica persistencia, incluso si algunas ubicaciones continúan `unresolved` o `missing` [1g]."
         },
         {
           "id": "3c",
           "title": "Actualiza metadatos",
-          "description": "Registra la hora de verificación, commit actual y conteos antes de guardar.",
+          "description": "Actualiza hora, commit y conteos antes de persistir.",
           "path": "src/verify.js",
           "lineNumber": 48,
           "lineContent": "doc.meta = { ...doc.meta, verifiedAt: new Date().toISOString(), commit: headCommit(root), anchors: { ...counts } };",
@@ -362,12 +383,13 @@
           "snippet": {
             "startLine": 45,
             "code": "    fixed: false,\n  };\n  if (fix && (changes.length || changedFiles.size)) {\n    doc.meta = { ...doc.meta, verifiedAt: new Date().toISOString(), commit: headCommit(root), anchors: { ...counts } };\n    persist(root, doc);\n    writeHtml(root, doc);\n    result.fixed = true;\n  }\n  return result;\n}\n"
-          }
+          },
+          "explanation": "Al entrar al bloque de corrección [3b], `verifyMap` conserva los metadatos existentes y añade `verifiedAt`. También reemplaza el commit registrado por `headCommit(root)` y guarda una copia de `counts`. Esos datos acompañan a las ubicaciones corregidas en el JSON [3d]. El commit identifica HEAD, mientras la comparación de archivos se hizo contra el árbol de trabajo, que puede incluir cambios no confirmados."
         },
         {
           "id": "3d",
           "title": "Persiste mapa JSON",
-          "description": "Escribe el documento corregido en el archivo JSON del mapa.",
+          "description": "`persist` escribe el documento corregido en el JSON del mapa.",
           "path": "src/verify.js",
           "lineNumber": 49,
           "lineContent": "persist(root, doc);",
@@ -376,12 +398,13 @@
           "snippet": {
             "startLine": 46,
             "code": "  };\n  if (fix && (changes.length || changedFiles.size)) {\n    doc.meta = { ...doc.meta, verifiedAt: new Date().toISOString(), commit: headCommit(root), anchors: { ...counts } };\n    persist(root, doc);\n    writeHtml(root, doc);\n    result.fixed = true;\n  }\n  return result;\n}\n"
-          }
+          },
+          "explanation": "Tras actualizar las ubicaciones [3a] y los metadatos [3c], `persist` serializa el documento completo en `.waymark/<id>.json`. Ese archivo será la referencia almacenada que cargará una verificación futura [1c]. La escritura ocurre incluso cuando la única deriva detectada fue un hash, porque [3b] usa ambas señales. No hay una validación adicional que convierta un resultado `fuzzy` en coincidencia segura antes de guardar."
         },
         {
           "id": "3e",
           "title": "Regenera visor HTML",
-          "description": "Vuelve a generar el visor a partir del mapa actualizado.",
+          "description": "Regenera el visor HTML desde el documento actualizado.",
           "path": "src/verify.js",
           "lineNumber": 50,
           "lineContent": "writeHtml(root, doc);",
@@ -390,37 +413,40 @@
           "snippet": {
             "startLine": 47,
             "code": "  if (fix && (changes.length || changedFiles.size)) {\n    doc.meta = { ...doc.meta, verifiedAt: new Date().toISOString(), commit: headCommit(root), anchors: { ...counts } };\n    persist(root, doc);\n    writeHtml(root, doc);\n    result.fixed = true;\n  }\n  return result;\n}\n"
-          }
+          },
+          "explanation": "Después de persistir el JSON [3d], `writeHtml` renderiza `.waymark/<id>.html` con el documento actualizado. El visor refleja las rutas y fragmentos que `anchorLocation` entregó [2i] y puede incorporar una instantánea de archivos referenciados. Mantener ambos artefactos sincronizados evita que el lector vea anclas antiguas en el HTML. Si falta un archivo para la instantánea, el visor usa el fragmento almacenado."
         },
         {
           "id": "3f",
           "title": "Reporta estado CLI",
-          "description": "La CLI prioriza BROKEN sobre STALE y muestra los cambios registrados.",
+          "description": "La CLI muestra `BROKEN`, `STALE` u `OK` y los cambios.",
           "path": "src/cli.js",
-          "lineNumber": 199,
+          "lineNumber": 235,
           "lineContent": "const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';",
           "status": "moved",
-          "fileHash": "ab2abb013c03",
+          "fileHash": "0b9ef6b90b08",
           "snippet": {
-            "startLine": 196,
+            "startLine": 232,
             "code": "      let bad = false;\n      for (const id of ids) {\n        const v = verifyMap(r, id, { fix: opt.fix });\n        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.broken || (opt.strict && v.stale && !v.fixed)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }\n    case 'render': {\n      const r = root();\n      const p = writeHtml(r, loadMap(r, rest[0]));\n      out(p);\n      if (opt.open) openFile(p);\n      return;\n    }"
           },
-          "note": "line 195 -> 199"
+          "note": "line 199 -> 235",
+          "explanation": "Para cada informe de `verifyMap` [1a], la CLI elige `BROKEN` si `broken` es positivo, luego `STALE` si `stale` es verdadero y, si no, `OK`. Imprime el ID, commits del mapa y HEAD y la marca `(fixed)` cuando hubo escritura. También muestra cada entrada de `changes` con estado, origen, destino y nota [1f]. El rótulo puede seguir diciendo `STALE` en la ejecución que aplicó `fix`, porque `stale` describe la deriva detectada antes de guardar."
         },
         {
           "id": "3g",
           "title": "Decide código de salida",
-          "description": "Devuelve fallo si hay anclas rotas o si strict detecta deriva que no se fijó.",
+          "description": "Falla por anclas rotas o deriva estricta sin fijar.",
           "path": "src/cli.js",
-          "lineNumber": 202,
+          "lineNumber": 238,
           "lineContent": "if (v.broken || (opt.strict && v.stale && !v.fixed)) bad = true;",
           "status": "moved",
-          "fileHash": "ab2abb013c03",
+          "fileHash": "0b9ef6b90b08",
           "snippet": {
-            "startLine": 199,
+            "startLine": 235,
             "code": "        const state = v.broken ? 'BROKEN' : v.stale ? 'STALE' : 'OK';\n        out(`${state.padEnd(7)} ${v.id}  map@${v.mapCommit || '?'} head@${v.headCommit || '?'}${v.fixed ? '  (fixed)' : ''}`);\n        for (const c of v.changes) out(`        ${c.status.padEnd(10)} [${c.id}] ${c.from} -> ${c.to}${c.note ? '  ' + c.note : ''}`);\n        if (v.broken || (opt.strict && v.stale && !v.fixed)) bad = true;\n      }\n      if (bad) process.exitCode = 1;\n      return;\n    }\n    case 'render': {\n      const r = root();\n      const p = writeHtml(r, loadMap(r, rest[0]));\n      out(p);\n      if (opt.open) openFile(p);\n      return;\n    }\n    case 'delete':\n      return out(`deleted ${deleteMap(root(), rest[0])}`);\n    case 'suggest': {"
           },
-          "note": "line 198 -> 202"
+          "note": "line 202 -> 238",
+          "explanation": "La CLI acumula `bad` mientras procesa uno o varios mapas [1a]. Lo activa si el informe tiene `broken`, o si `--strict` encuentra `stale` sin `fixed`. Al terminar, establece `process.exitCode = 1` solo cuando `bad` es verdadero, lo que permite usar la verificación en automatizaciones. `--fix` puede suprimir el fallo estricto por deriva guardada, pero no elimina un fallo por anclas rotas [1g]."
         }
       ],
       "tree": [
@@ -454,7 +480,8 @@
           ]
         }
       ],
-      "guide": "Con `fix`, cada ubicación se sustituye por el ancla calculada [3a]. Si hubo deriva, se actualizan metadatos [3b] [3c], JSON [3d] y HTML [3e]. La CLI muestra el diagnóstico [3f] y solo falla por anclas rotas, o por deriva sin fijar con `--strict` [3g]."
+      "motivation": "Verificar debe servir tanto para inspección sin cambios como para mantener el mapa alineado con el código. Esta etapa controla cuándo se persisten los resultados y cómo se interpreta el diagnóstico desde la CLI.",
+      "details": "El resultado calculado reemplaza la ubicación en memoria solo si se solicitó `fix` [3a]. La escritura se activa únicamente cuando esa opción coincide con algún cambio de ancla o hash [3b]; entonces se registran hora de verificación, commit y conteos [3c], se persiste el JSON [3d] y se regenera el visor HTML [3e]. La CLI muestra `BROKEN`, `STALE` u `OK`, en ese orden de prioridad, además de cada cambio [3f]. Su código de salida falla por anclas rotas o por deriva sin fijar bajo `--strict` [3g]. El indicador `fixed` significa que hubo persistencia, pero no certifica que las ubicaciones `unresolved` o `missing` hayan quedado resueltas [1g] [3b]."
     }
   ],
   "links": [
@@ -476,19 +503,20 @@
   ],
   "meta": {
     "createdAt": "2026-10-01T17:03:45.835Z",
-    "updatedAt": "2026-10-01T17:03:45.835Z",
+    "updatedAt": "2026-10-20T01:57:22.107Z",
     "root": "C:\\DATOS\\codemaps-custom",
-    "commit": "49d9b5964d9804ad67a5397fe2e1918396990298",
+    "commit": "92eefc332fc861c3d1deda83e2180271900b86ec",
     "branch": null,
     "remote": null,
     "anchors": {
-      "ok": 20,
-      "moved": 3,
+      "ok": 19,
+      "moved": 4,
       "fuzzy": 0,
       "relocated": 0,
       "unresolved": 0,
       "missing": 0
     },
-    "verifiedAt": "2026-10-01T21:48:47.582Z"
-  }
+    "verifiedAt": "2026-10-20T01:53:35.082Z"
+  },
+  "story": "Un mapa Waymark conserva rutas, líneas, texto y hashes que pueden quedar desfasados cuando cambia el código. La CLI [1a] y el MCP [1b] reúnen los mapas solicitados y entregan cada uno a `verifyMap` [1c]; este contrasta sus ubicaciones [1d] con el árbol de trabajo mediante `anchorLocation` [2a]. Si la ruta desapareció, se busca otra entre archivos rastreados por Git [2b]; después se intenta la línea previa [2d], el mismo texto en otra línea [2e] y, como último recurso, una coincidencia parcial o de símbolo [2f]. El resultado separa dos señales: los hashes y cambios de ubicación determinan `stale` [1e] [1f] [1g], mientras `unresolved` o `missing` determinan `broken` [1g]. Sin `fix`, se informa la deriva sin persistir nuevos anclajes [3a]; con `fix`, se guardan el JSON y el visor HTML si hubo cambios [3b] [3d] [3e]. La CLI muestra el estado y fija su salida según anclas rotas y `--strict` [3f] [3g]; un estado `fuzzy` merece revisión porque la cercanía textual no demuestra identidad semántica [2g]."
 }

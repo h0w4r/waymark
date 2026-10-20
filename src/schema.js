@@ -5,15 +5,27 @@ import * as z from 'zod';
 const TreeNode = z.lazy(() =>
   z.object({
     ref: z.string().optional().describe('Location id this node represents, e.g. "1a"'),
-    label: z.string().optional().describe('Text shown for the node; defaults to the location title'),
+    label: z
+      .string()
+      .optional()
+      .describe('Text shown for the node; defaults to the location title. Label-only nodes describe intermediate steps (short phrase or pseudo-code)'),
+    via: z.string().optional().describe('Label of the edge from the parent (data/control that flows), e.g. "streams text"'),
     children: z.array(TreeNode).optional(),
   }),
 );
 
 export const LocationInput = z.object({
   id: z.string().optional().describe('Stable id "<traceId><letter>", e.g. "1a". Auto-assigned if omitted'),
-  title: z.string().describe('Short name of the step, e.g. "Validate JWT"'),
-  description: z.string().describe('What happens here and why it matters in the flow (1-3 sentences)'),
+  title: z.string().describe('Short name of the step (<= 5 words), e.g. "Validate JWT"'),
+  description: z
+    .string()
+    .describe('ONE short sentence (<= 15 words) shown inline next to the code, e.g. "Dual learning rate for embeddings vs matrices"'),
+  explanation: z
+    .string()
+    .optional()
+    .describe(
+      'Storytelling explanation (markdown, 3-6 sentences) shown when the reader clicks "Explain": what happens at this exact point, where control/data comes from and goes next, why it is written this way, pitfalls. Plain language, may use an analogy; reference other nodes as [1b]',
+    ),
   path: z.string().describe('File path relative to repo root (forward slashes)'),
   lineNumber: z.number().int().positive().describe('1-based line of the anchor'),
   lineContent: z
@@ -25,7 +37,16 @@ export const LocationInput = z.object({
 export const TraceInput = z.object({
   id: z.string().optional().describe('Trace id "1", "2"... Auto-assigned if omitted'),
   title: z.string(),
-  description: z.string().describe('One paragraph: what this trace explains'),
+  description: z.string().describe('One sentence: what this trace shows (shown under the trace title)'),
+  diagramTitle: z.string().optional().describe('Title above the trace tree, e.g. "Mid-training Data Pipeline"'),
+  motivation: z
+    .string()
+    .optional()
+    .describe('Guide "Motivation" (markdown, 1 paragraph): why this part exists, the problem or constraint that drives it'),
+  details: z
+    .string()
+    .optional()
+    .describe('Guide "Details" (markdown, 2-4 paragraphs): narrative walkthrough of the trace referencing every node as [1a], [1b]'),
   locations: z.array(LocationInput).min(1).describe('Ordered by execution / reading order'),
   tree: z
     .array(TreeNode)
@@ -34,7 +55,7 @@ export const TraceInput = z.object({
   guide: z
     .string()
     .optional()
-    .describe('Markdown walkthrough of the trace; reference nodes as [1a], [1b]'),
+    .describe('Deprecated alias of "details"'),
 });
 
 export const LinkInput = z.object({
@@ -45,7 +66,16 @@ export const LinkInput = z.object({
 
 export const MapInput = z.object({
   title: z.string(),
-  description: z.string().describe('Overview: what the map covers and the key takeaway'),
+  description: z
+    .string()
+    .describe('Summary (2-3 sentences) of what the map covers, citing key nodes inline as [1b], [2c], [3d, 4a]'),
+  story: z
+    .string()
+    .optional()
+    .describe(
+      'Holistic storytelling narrative (markdown, 3-6 short paragraphs) for a newcomer: the problem the system solves, the journey of the request/data through the traces in order (cite nodes), how the pieces fit, and key takeaways/gotchas',
+    ),
+  language: z.string().optional().describe('Language of the prose, e.g. "es" or "en" (use the language of the query)'),
   query: z.string().optional().describe('The user prompt / topic that produced this map'),
   traces: z.array(TraceInput).min(1),
   links: z.array(LinkInput).optional().describe('Cross-trace relationships between locations'),
@@ -62,12 +92,16 @@ export function normalizeMap(input) {
   const seen = new Set();
   map.traces.forEach((trace, ti) => {
     trace.id = trace.id || String(ti + 1);
+    if (!/^[A-Za-z0-9_-]{1,16}$/.test(trace.id)) throw new Error(`Invalid trace id "${trace.id}" (use e.g. "1")`);
     trace.locations.forEach((loc, li) => {
       loc.id = loc.id || `${trace.id}${letterId(li)}`;
+      if (!/^[A-Za-z0-9_-]{1,16}$/.test(loc.id)) throw new Error(`Invalid location id "${loc.id}" (use e.g. "1a")`);
       if (seen.has(loc.id)) throw new Error(`Duplicate location id "${loc.id}"`);
       seen.add(loc.id);
       loc.path = loc.path.replace(/\\/g, '/').replace(/^\.\//, '');
     });
+    if (trace.guide && !trace.details) trace.details = trace.guide;
+    delete trace.guide;
     if (!trace.tree || trace.tree.length === 0) trace.tree = linearTree(trace.locations);
     for (const ref of treeRefs(trace.tree)) {
       if (!seen.has(ref)) throw new Error(`Trace ${trace.id} tree references unknown location "${ref}"`);

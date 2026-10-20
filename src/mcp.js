@@ -5,11 +5,11 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { MapInput } from './schema.js';
 import { fileURLToPath } from 'node:url';
 import { resolveRoot } from './git.js';
-import { saveMap, loadMap, listMaps, writeHtml, deleteMap } from './store.js';
+import { saveMap, loadMap, listMaps, writeHtml, deleteMap, annotateMap, narrativeGaps } from './store.js';
 import { verifyMap } from './verify.js';
 import { findInFile } from './anchor.js';
 import { suggestTopics } from './suggest.js';
-import { waymarkGuide } from './guide.js';
+import { waymarkGuide, enrichGuide } from './guide.js';
 import { renderMarkdown } from './render/markdown.js';
 import { renderMermaid } from './render/mermaid.js';
 import { openFile } from './open.js';
@@ -47,16 +47,20 @@ export function createServer() {
     {
       title: 'Start a waymark',
       description:
-        'Begin generating a waymark for a topic/question. Returns the Waymark agent procedure, the input format, repo hints (recent files, entry points) and existing maps. Call this first, then explore the code and submit with waymark_create.',
-      inputSchema: { query: z.string().describe('Topic or question, e.g. "how does checkout payment work?"'), root: rootArg },
+        'Begin generating a waymark map for a topic/question. Returns the Waymark agent procedure (structure + storytelling rules), the input format, repo hints (recent files, entry points) and existing maps. Call this first, then explore the code and submit with waymark_create.',
+      inputSchema: {
+        query: z.string().describe('Topic or question, e.g. "how does checkout payment work?"'),
+        mode: z.enum(['fast', 'smart']).optional().describe('fast: short map quickly; smart (default): thorough map with full storytelling'),
+        root: rootArg,
+      },
       annotations: { readOnlyHint: true },
     },
-    safe(async ({ query, root }) => {
+    safe(async ({ query, mode, root }) => {
       const r = rootOf(root);
       const hints = suggestTopics(r, { limit: 5 });
       const existing = listMaps(r).slice(0, 15).map(({ id, title, query: q, updatedAt }) => ({ id, title, query: q, updatedAt }));
       return text(
-        `${waymarkGuide(query)}\n## Repository\n\nroot: ${r}\n\n` +
+        `${waymarkGuide(query, { mode })}\n## Repository\n\nroot: ${r}\n\n` +
           `Entry points: ${hints.entryPoints.join(', ') || '(none detected)'}\n\n` +
           `Recently touched: ${hints.recentFiles.slice(0, 12).map((f) => f.file).join(', ') || '(none)'}\n\n` +
           `Existing waymark (reuse/update instead of duplicating): ${existing.length ? JSON.stringify(existing) : 'none'}`,
@@ -106,18 +110,79 @@ export function createServer() {
     },
     safe(async ({ id, root, ...map }) => {
       const r = rootOf(root);
-      const { doc, report, jsonPath, htmlPath } = saveMap(r, map, { id });
+      const { doc, report, narrative, jsonPath, htmlPath } = saveMap(r, map, { id });
       server.sendResourceListChanged();
-      return text({
-        id: doc.id,
-        resource: `waymark://${doc.id}`,
-        html: htmlPath,
-        json: jsonPath,
-        anchors: report,
-        next: report.healthy
-          ? 'All anchors verified. Share the HTML file or reference waymark://' + doc.id
-          : 'Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id="' + doc.id + '".',
-      });
+      const next = [];
+      if (!report.healthy) {
+        next.push('Some locations could not be verified. Fix them (waymark_find_anchor helps) and call waymark_create again with id="' + doc.id + '".');
+      }
+      if (!narrative.complete) {
+        next.push('Narrative is incomplete (see "narrative"). Fill the story, trace motivation/details and per-location explanations with waymark_annotate(id="' + doc.id + '").');
+      }
+      if (!next.length) next.push('All anchors verified and narrative complete. Share the HTML file or reference waymark://' + doc.id);
+      return text({ id: doc.id, resource: `waymark://${doc.id}`, html: htmlPath, json: jsonPath, anchors: report, narrative, next });
+    }),
+  );
+
+  const prose = () => z.string().optional();
+  server.registerTool(
+    'waymark_annotate',
+    {
+      title: 'Annotate a waymark (narrative)',
+      description:
+        'Adds or rewrites the prose of an existing map without re-sending or re-anchoring it: map story/description/title, trace motivation/details/description/diagramTitle, location explanation/description/title. Only the fields you pass change. Regenerates the HTML viewer and returns which narrative fields are still missing.',
+      inputSchema: {
+        id: z.string().describe('Map id (a unique prefix is enough)'),
+        title: prose(),
+        description: prose().describe('Map summary citing nodes as [1a]'),
+        story: prose().describe('Holistic storytelling narrative (markdown)'),
+        language: prose(),
+        traces: z
+          .array(
+            z.object({
+              id: z.string(),
+              title: prose(),
+              description: prose(),
+              diagramTitle: prose(),
+              motivation: prose().describe('Why this part exists (markdown)'),
+              details: prose().describe('Narrative walkthrough citing nodes (markdown)'),
+            }),
+          )
+          .optional(),
+        locations: z
+          .array(
+            z.object({
+              id: z.string(),
+              title: prose(),
+              description: prose().describe('One sentence <= 15 words'),
+              explanation: prose().describe('Storytelling explanation, 3-6 sentences (markdown)'),
+            }),
+          )
+          .optional(),
+        root: rootArg,
+      },
+    },
+    safe(async ({ id, root, ...patch }) => text(annotateMap(rootOf(root), id, patch))),
+  );
+
+  server.registerTool(
+    'waymark_enrich',
+    {
+      title: 'Enrich a waymark with storytelling',
+      description:
+        'Returns the procedure to upgrade an existing map with full storytelling (holistic story, Motivation/Details guides per trace, an explanation per location), the list of missing narrative and the map itself. Follow it and save with waymark_annotate.',
+      inputSchema: { id: z.string(), root: rootArg },
+      annotations: { readOnlyHint: true },
+    },
+    safe(async ({ id, root }) => {
+      const doc = loadMap(rootOf(root), id);
+      return text(
+        enrichGuide(doc.id) +
+          '\n\n## Missing narrative\n\n' +
+          JSON.stringify(narrativeGaps(doc)) +
+          '\n\n## Current map\n\n' +
+          renderMarkdown(doc, { detail: 'full' }),
+      );
     }),
   );
 

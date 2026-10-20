@@ -15,6 +15,8 @@ const TOOLS = [
   'waymark_suggest_topics',
   'waymark_find_anchor',
   'waymark_create',
+  'waymark_annotate',
+  'waymark_enrich',
   'waymark_list',
   'waymark_get',
   'waymark_verify',
@@ -42,8 +44,8 @@ ${AGENT_RETURN}
 // Claude Code shows skills in the / menu; argument-hint + $ARGUMENTS make `/waymark <topic>` work.
 const SKILL = ({ claude = false } = {}) => `---
 name: waymark
-description: Waymark — create, read, verify and share hierarchical, line-anchored maps of how code executes (traces of numbered locations 1a, 1b… with a call tree, guide and HTML viewer). Use when the user asks how a flow works end-to-end, asks for a code map/diagram/trace of a feature, mentions waymark or waymark://<id>, or before changing code an existing map covers.
-${claude ? 'argument-hint: "<topic> | list | show <id> | verify [id] | from-chat"\n' : ''}---
+description: Waymark — create, read, verify and share narrated, line-anchored maps of how code executes (traces of numbered locations 1a, 1b… with an annotated tree, a storytelling guide, per-node explanations and an interactive viewer). Use when the user asks how a flow works end-to-end, asks for a code map/diagram/walkthrough of a feature, mentions waymark or waymark://<id>, or before changing code an existing map covers.
+${claude ? 'argument-hint: "<topic> [--fast] | list | show <id> | enrich <id> | verify [id] | from-chat"\n' : ''}---
 ${MARK}
 # Waymark
 ${claude ? '\nArguments: $ARGUMENTS\n' : ''}
@@ -57,15 +59,17 @@ Always pass \`root\` = the absolute path of the current workspace to \`waymark_*
 - **list** → \`waymark_list\`; show id, title, nodes, updated.
 - **show <id>** → \`waymark_get\` with \`format: "compact"\`; summarize and point to \`.waymark/<id>.html\`.
 - **verify [id]** → \`waymark_verify\` with \`fix: true\`; report moved/relocated/broken anchors.
+- **enrich <id>** → add the storytelling layer to an existing map: \`waymark_enrich(id)\` returns the procedure and what is missing; write the story, Motivation/Details per trace and an explanation per node, save with \`waymark_annotate\`.
 - **from-chat** → build a map of the code paths discussed in this conversation (derive the topic yourself).
-- **anything else** is a topic → create a map (below).
+- **anything else** is a topic → create a map (below). \`--fast\` in the text → \`mode: "fast"\`; otherwise \`"smart"\`.
 
 ## Create a map
-1. Call \`waymark_start(query)\`: it returns the full Waymark agent procedure, the input format, repo hints and existing maps. Follow it exactly.
+1. Call \`waymark_start(query, mode)\`: it returns the full Waymark agent procedure (structure **and** storytelling rules), the input format, repo hints and existing maps. Follow it exactly.
    - If subagents are available (Claude Code \`waymark\` agent, Codex \`waymark\` custom agent), delegate the exploration to it.
 2. Explore **read-only** (Read/Grep/Glob, or \`rg\` / \`sed -n\` / \`git grep\` in the shell). Every location must be a line you actually read.
-3. Submit with \`waymark_create\`; fix \`unresolved\`/\`missing\` anchors and resubmit with the same \`id\` until healthy.
-4. Reply with the id, the HTML path and a short summary; offer \`waymark_render(id, open: true)\`.
+3. Write the prose as a story for a new teammate, in the user's language: map summary + holistic **story**; per trace **motivation** (why it exists) and **details** (narrative walkthrough citing [1a]); per location a one-line **description** and a 3-6 sentence **explanation**.
+4. Submit with \`waymark_create\`; fix \`unresolved\`/\`missing\` anchors and resubmit with the same \`id\`; fill any missing narrative it reports with \`waymark_annotate\`.
+5. Reply with the id, the HTML path and a short summary; offer \`waymark_render(id, open: true)\` (map pane with "See more" guides and "Explain" per node, code view, interactive diagram).
 
 ## Use a map as context
 - Claude Code: \`@waymark:waymark://<id>\`. Any harness: \`waymark_get(id)\` (\`format: "compact"\` for structure only).
@@ -186,7 +190,10 @@ function claudeGlobal(serverCmd, written) {
     return;
   }
   const add = run(['mcp', 'add', '-s', 'user', 'waymark', '--', serverCmd.command, ...serverCmd.args]);
-  written.push(add.status === 0 ? 'claude global: registered via `claude mcp add -s user waymark`' : `claude global failed: ${add.stderr || add.stdout}`);
+  const msg = `${add.stderr || ''}${add.stdout || ''}`;
+  if (add.status === 0) written.push('claude global: registered via `claude mcp add -s user waymark`');
+  else if (/already exists in user config/i.test(msg)) written.push('claude global: user-scoped MCP server "waymark" already registered');
+  else written.push(`claude global failed: ${msg}`);
 }
 
 // ---------- AGENTS.md (read by Codex and many other harnesses) ----------
