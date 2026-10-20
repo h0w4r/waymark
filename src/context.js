@@ -1,12 +1,25 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { listMaps, loadMap, narrativeDrift } from './store.js';
 import { renderTextTree } from './render/markdown.js';
 
+// Real path (resolves symlinks and Windows 8.3 short names such as C:\Users\RUNNER~1, which
+// git never returns); falls back to the input when the path does not exist.
+const real = (p) => {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return p;
+  }
+};
+
 /** Normalizes an absolute or relative path to a repo-relative, forward-slash path. */
 export function relPath(root, p) {
   const abs = path.isAbsolute(p) ? p : path.resolve(root, p);
-  const rel = path.relative(root, abs).split(path.sep).join('/');
-  return rel.startsWith('..') ? null : rel;
+  let rel = path.relative(root, abs);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) rel = path.relative(real(root), real(abs));
+  rel = rel.split(path.sep).join('/');
+  return rel.startsWith('..') || path.isAbsolute(rel) ? null : rel;
 }
 
 /**
